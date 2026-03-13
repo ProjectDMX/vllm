@@ -50,6 +50,7 @@ except Exception:  # pragma: no cover - keep vendored vLLM usable without monito
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import CacheConfig, VllmConfig
 from vllm.distributed import get_pp_group, get_tensor_model_parallel_world_size
+from vllm.forward_context import get_forward_context, is_forward_context_available
 from vllm.logger import init_logger
 from vllm.model_executor.layers.attention.encoder_only_attention import (
     Attention,
@@ -71,6 +72,52 @@ from .qwen2 import Qwen2Model
 from .utils import AutoWeightsLoader, PPMissingLayer, extract_layer_index, maybe_prefix
 
 logger = init_logger(__name__)
+
+
+def _iter_attn_metadata_objects(attn_metadata: Any):
+    if attn_metadata is None:
+        return
+    if isinstance(attn_metadata, dict):
+        for value in attn_metadata.values():
+            yield from _iter_attn_metadata_objects(value)
+        return
+    if isinstance(attn_metadata, (list, tuple)):
+        for value in attn_metadata:
+            yield from _iter_attn_metadata_objects(value)
+        return
+    yield attn_metadata
+
+
+def _get_num_actual_tokens_from_forward_context() -> int | None:
+    if not is_forward_context_available():
+        return None
+
+    try:
+        forward_context = get_forward_context()
+    except Exception:
+        return None
+
+    discovered: list[int] = []
+    for metadata in _iter_attn_metadata_objects(getattr(forward_context, "attn_metadata", None)):
+        num_actual_tokens = getattr(metadata, "num_actual_tokens", None)
+        if num_actual_tokens is not None:
+            discovered.append(int(num_actual_tokens))
+            continue
+
+        query_start_loc_cpu = getattr(metadata, "query_start_loc_cpu", None)
+        if query_start_loc_cpu is not None and len(query_start_loc_cpu) > 0:
+            discovered.append(int(query_start_loc_cpu[-1].item()))
+
+    if not discovered:
+        return None
+
+    baseline = discovered[0]
+    for value in discovered[1:]:
+        if value != baseline:
+            raise RuntimeError(
+                f"inconsistent num_actual_tokens across attention metadata: {discovered}"
+            )
+    return baseline
 
 
 class _MonitoringHookedModelMixin:
@@ -197,6 +244,11 @@ class Qwen3Attention(nn.Module):
         )
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
+        self.hook_q = HookPoint()
+        self.hook_k = HookPoint()
+        self.hook_v = HookPoint()
+        self.hook_z = HookPoint()
+        self.hook_result = HookPoint()
 
     def forward(
         self,
@@ -205,16 +257,35 @@ class Qwen3Attention(nn.Module):
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-        # Add qk-norm
+
+        # Mirror HF q/k/v hook semantics with packed-token local-head tensors.
         q_by_head = q.view(*q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim)
         q_by_head = self.q_norm(q_by_head)
-        q = q_by_head.view(q.shape)
+        q_by_head = self.hook_q(q_by_head)
+        q = q_by_head.reshape(q.shape)
+
         k_by_head = k.view(*k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim)
         k_by_head = self.k_norm(k_by_head)
-        k = k_by_head.view(k.shape)
+        k_by_head = self.hook_k(k_by_head)
+        k = k_by_head.reshape(k.shape)
+
+        v_by_head = v.view(*v.shape[:-1], v.shape[-1] // self.head_dim, self.head_dim)
+        v_by_head = self.hook_v(v_by_head)
+        v = v_by_head.reshape(v.shape)
+
         q, k = self.rotary_emb(positions, q, k)
         attn_output = self.attn(q, k, v)
+
+        z_by_head = attn_output.view(
+            *attn_output.shape[:-1],
+            attn_output.shape[-1] // self.head_dim,
+            self.head_dim,
+        )
+        z_by_head = self.hook_z(z_by_head)
+        attn_output = z_by_head.reshape(attn_output.shape).contiguous()
+
         output, _ = self.o_proj(attn_output)
+        output = self.hook_result(output)
         return output
 
 
@@ -406,6 +477,7 @@ class Qwen3PForCausalLM(
             self.lm_head = PPMissingLayer()
 
         self.logits_processor = LogitsProcessor(config.vocab_size)
+        self.token_ids = HookPoint()
 
         self.make_empty_intermediate_tensors = (
             self.model.make_empty_intermediate_tensors
@@ -431,6 +503,12 @@ class Qwen3PForCausalLM(
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor | IntermediateTensors:
+        if input_ids is not None:
+            token_ids_for_monitoring = input_ids
+            num_actual_tokens = _get_num_actual_tokens_from_forward_context()
+            if num_actual_tokens is not None and 0 <= num_actual_tokens < input_ids.shape[0]:
+                token_ids_for_monitoring = input_ids[:num_actual_tokens]
+            self.token_ids(token_ids_for_monitoring)
         hidden_states = self.model(
             input_ids, positions, intermediate_tensors, inputs_embeds
         )

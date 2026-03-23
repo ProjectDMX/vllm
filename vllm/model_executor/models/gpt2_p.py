@@ -328,7 +328,7 @@ class GPT2PLMHeadModel(nn.Module, SupportsPP):
         specs: list[HookSpec] = []
         tr = self.transformer
 
-        specs.append(HookSpec(HOOK_TYPE_TOKEN_IDS, self.hook_token_ids, dtype=torch.long))
+        specs.append(HookSpec(HOOK_TYPE_TOKEN_IDS, self.hook_token_ids))
         specs.append(HookSpec(HOOK_TYPE_EMBED, tr.hook_embed))
         specs.append(HookSpec(HOOK_TYPE_POS_EMBED, tr.hook_pos_embed))
 

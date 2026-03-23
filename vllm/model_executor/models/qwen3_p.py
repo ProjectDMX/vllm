@@ -423,7 +423,7 @@ class Qwen3PForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle3):
     def get_hook_specs(self) -> list[HookSpec]:
         specs: list[HookSpec] = []
         m = self.model
-        specs.append(HookSpec(HOOK_TYPE_TOKEN_IDS, self.hook_token_ids, dtype=torch.long))
+        specs.append(HookSpec(HOOK_TYPE_TOKEN_IDS, self.hook_token_ids))
         specs.append(HookSpec(HOOK_TYPE_EMBED, m.hook_embed))
         for i in range(m.start_layer, m.end_layer):
             layer = m.layers[i]

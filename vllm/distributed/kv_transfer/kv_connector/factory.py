@@ -156,6 +156,12 @@ KVConnectorFactory.register_connector(
 )
 
 KVConnectorFactory.register_connector(
+    "FullHiddenStatesConnector",
+    "vllm.distributed.kv_transfer.kv_connector.v1.full_hidden_states_connector",
+    "FullHiddenStatesConnector",
+)
+
+KVConnectorFactory.register_connector(
     "P2pNcclConnector",
     "vllm.distributed.kv_transfer.kv_connector.v1.p2p.p2p_nccl_connector",
     "P2pNcclConnector",

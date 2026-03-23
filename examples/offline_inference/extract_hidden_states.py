@@ -11,7 +11,7 @@ from vllm import LLM, SamplingParams
 
 with tempfile.TemporaryDirectory() as tmpdirname:
     llm = LLM(
-        model="Qwen/Qwen3-8B",  # Your target model
+        model="Qwen/Qwen3-0.6B",  # Your target model
         speculative_config={
             "method": "extract_hidden_states",
             "num_speculative_tokens": 1,

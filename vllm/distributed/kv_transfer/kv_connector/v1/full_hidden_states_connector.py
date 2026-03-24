@@ -40,8 +40,10 @@ def extract_from_kv_cache(
     """Extract data from KV cache.
     Assume shape: (num_pages, page_size, num_heads, head_size)
     """
-    padded_kv = kv_cache.flatten(0, 1)[slot_mapping]
-    return padded_kv[:num_tokens]
+    padded_kv = kv_cache.flatten(0, 1)
+    if slot_mapping.device != padded_kv.device:
+        slot_mapping = slot_mapping.to(padded_kv.device)
+    return padded_kv[slot_mapping][:num_tokens]
 
 
 @dataclass

@@ -130,7 +130,7 @@ class GPT2Block(nn.Module):
         self.ln_2 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
         self.mlp = GPT2MLP(inner_dim, config, quant_config, prefix=f"{prefix}.mlp")
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor):
         # BENCH_OFF resid_pre: self._buf_resid_pre[:hidden_states.shape[0]].copy_(hidden_states)
         residual = hidden_states
         hidden_states = self.ln_1(hidden_states)
@@ -236,73 +236,89 @@ class GPT2RefLMHeadModel(nn.Module, SupportsPP):
         self._init_ref_buffers(vllm_config)
 
     def _init_ref_buffers(self, vllm_config: VllmConfig) -> None:
+        """Pre-allocate capture buffers for enabled hooks.
+
+        Buffers are allocated before CUDA graph capture so they live
+        outside the graph memory pool and won't be reused during replay.
+        """
         cfg_path = os.environ.get("REF_CONFIG")
         if not cfg_path:
             return
         with open(cfg_path) as f:
             rc = json.load(f)
-        max_len = rc["max_len"]
         enabled = set(rc["enabled_hooks"])
-        config = self.config
-        H, nh = config.hidden_size, config.num_attention_heads
-        hd, V = H // nh, config.vocab_size
-        device, dtype = "cuda", vllm_config.model_config.dtype
+        max_len = rc.get("max_len", 8192)
+        config = vllm_config.model_config.hf_config
+        H = config.hidden_size                          # 768 for GPT-2
+        n_heads = config.num_attention_heads             # 12
+        head_dim = H // n_heads                          # 64
+        vocab_size = config.vocab_size                   # 50257
+        dt = vllm_config.model_config.dtype or torch.bfloat16
+
+        def _alloc(*shape, dtype=dt):
+            return torch.empty(*shape, dtype=dtype, device="cuda")
+
         tr = self.transformer
         if "embed" in enabled:
-            tr._buf_embed = torch.empty(max_len, H, device=device, dtype=dtype)
+            tr._buf_embed = _alloc(max_len, H)
         if "pos_embed" in enabled:
-            tr._buf_pos_embed = torch.empty(max_len, H, device=device, dtype=dtype)
+            tr._buf_pos_embed = _alloc(max_len, H)
         if "resid_final" in enabled:
-            tr._buf_resid_final = torch.empty(max_len, H, device=device, dtype=dtype)
+            tr._buf_resid_final = _alloc(max_len, H)
         if "final_ln" in enabled:
-            tr._buf_final_ln = torch.empty(max_len, H, device=device, dtype=dtype)
+            tr._buf_final_ln = _alloc(max_len, H)
         for i in range(tr.start_layer, tr.end_layer):
             block, attn = tr.h[i], tr.h[i].attn
             if "resid_pre" in enabled:
-                block._buf_resid_pre = torch.empty(max_len, H, device=device, dtype=dtype)
+                block._buf_resid_pre = _alloc(max_len, H)
             if "ln1" in enabled:
-                block._buf_ln1 = torch.empty(max_len, H, device=device, dtype=dtype)
+                block._buf_ln1 = _alloc(max_len, H)
             if "attn_out" in enabled:
-                block._buf_attn_out = torch.empty(max_len, H, device=device, dtype=dtype)
+                block._buf_attn_out = _alloc(max_len, H)
             if "resid_mid" in enabled:
-                block._buf_resid_mid = torch.empty(max_len, H, device=device, dtype=dtype)
+                block._buf_resid_mid = _alloc(max_len, H)
             if "ln2" in enabled:
-                block._buf_ln2 = torch.empty(max_len, H, device=device, dtype=dtype)
+                block._buf_ln2 = _alloc(max_len, H)
             if "mlp_in" in enabled:
-                block._buf_mlp_in = torch.empty(max_len, H, device=device, dtype=dtype)
+                block._buf_mlp_in = _alloc(max_len, H)
             if "mlp_out" in enabled:
-                block._buf_mlp_out = torch.empty(max_len, H, device=device, dtype=dtype)
+                block._buf_mlp_out = _alloc(max_len, H)
             if "q" in enabled:
-                attn._buf_q = torch.empty(max_len, nh, hd, device=device, dtype=dtype)
+                attn._buf_q = _alloc(max_len, n_heads, head_dim)
             if "k" in enabled:
-                attn._buf_k = torch.empty(max_len, nh, hd, device=device, dtype=dtype)
+                attn._buf_k = _alloc(max_len, n_heads, head_dim)
             if "v" in enabled:
-                attn._buf_v = torch.empty(max_len, nh, hd, device=device, dtype=dtype)
+                attn._buf_v = _alloc(max_len, n_heads, head_dim)
             if "z" in enabled:
-                attn._buf_z = torch.empty(max_len, H, device=device, dtype=dtype)
+                attn._buf_z = _alloc(max_len, n_heads, head_dim)
         if "final_logits" in enabled:
-            self._buf_final_logits = torch.empty(max_len, V, device=device, dtype=dtype)
+            self._buf_final_logits = _alloc(max_len, vocab_size, dtype=torch.float32)
         if "token_ids" in enabled:
-            self._buf_token_ids = torch.empty(max_len, device=device, dtype=torch.int32)
+            self._buf_token_ids = _alloc(max_len, dtype=torch.int32)
 
     def get_ref_buffers(self) -> dict[str, torch.Tensor]:
+        """Return {name: tensor} for all captured ref buffers (non-None)."""
         bufs: dict[str, torch.Tensor] = {}
         tr = self.transformer
         for attr in ("_buf_embed", "_buf_pos_embed", "_buf_resid_final", "_buf_final_ln"):
-            if hasattr(tr, attr):
-                bufs[attr[5:]] = getattr(tr, attr)
+            v = getattr(tr, attr, None)
+            if v is not None:
+                bufs[attr[5:]] = v
         for i in range(tr.start_layer, tr.end_layer):
             block, attn = tr.h[i], tr.h[i].attn
             for attr in ("_buf_resid_pre", "_buf_ln1", "_buf_attn_out",
                          "_buf_resid_mid", "_buf_ln2", "_buf_mlp_in", "_buf_mlp_out"):
-                if hasattr(block, attr):
-                    bufs[f"{attr[5:]}_L{i}"] = getattr(block, attr)
+                v = getattr(block, attr, None)
+                if v is not None:
+                    bufs[f"{attr[5:]}_L{i}"] = v
             for attr in ("_buf_q", "_buf_k", "_buf_v", "_buf_z"):
-                if hasattr(attn, attr):
-                    bufs[f"{attr[5:]}_L{i}"] = getattr(attn, attr)
+                v = getattr(attn, attr, None)
+                if v is not None:
+                    bufs[f"{attr[5:]}_L{i}"] = v
         for attr in ("_buf_final_logits", "_buf_token_ids"):
-            if hasattr(self, attr):
-                bufs[attr[5:]] = getattr(self, attr)
+            v = getattr(self, attr, None)
+            if v is not None:
+                bufs[attr[5:]] = v
         return bufs
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:

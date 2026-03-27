@@ -344,9 +344,6 @@ class Qwen3RefForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle3):
         V = config.vocab_size
         device = "cuda"
         dtype = vllm_config.model_config.dtype
-        print(f"[qwen3_ref] _init_ref_buffers: vllm_config.model_config.dtype={dtype}", flush=True)
-        print(f"[qwen3_ref] hf_config.torch_dtype={getattr(config, 'torch_dtype', 'N/A')}", flush=True)
-
         m = self.model
         if "embed" in enabled:
             m._buf_embed = torch.empty(max_len, H, device=device, dtype=dtype)

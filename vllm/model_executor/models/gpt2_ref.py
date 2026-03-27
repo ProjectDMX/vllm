@@ -290,7 +290,7 @@ class GPT2RefLMHeadModel(nn.Module, SupportsPP):
             if "v" in enabled:
                 attn._buf_v = _alloc(max_len, n_heads, head_dim)
             if "z" in enabled:
-                attn._buf_z = _alloc(max_len, n_heads, head_dim)
+                attn._buf_z = _alloc(max_len, H)
         if "final_logits" in enabled:
             self._buf_final_logits = _alloc(max_len, vocab_size, dtype=torch.float32)
         if "token_ids" in enabled:

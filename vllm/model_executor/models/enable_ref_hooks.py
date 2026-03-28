@@ -25,12 +25,12 @@ _HOOK_SHORTCUTS = {
     ],
     "hidden-states": ["resid_pre"],
     # vllm-full: excludes attn_scores, pattern (FlashAttention doesn't
-    # materialize) and resid_final (fused RMSNorm — extra addition needed).
+    # materialize).
     "vllm-full": [
         "token_ids", "embed", "pos_embed",
         "resid_pre", "ln1", "q", "k", "v", "z",
         "attn_out", "resid_mid", "ln2", "mlp_in", "mlp_out",
-        "final_ln", "final_logits",
+        "resid_final", "final_ln", "final_logits",
     ],
 }
 

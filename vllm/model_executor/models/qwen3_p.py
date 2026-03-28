@@ -263,8 +263,9 @@ class Qwen3DecoderLayer(nn.Module):
         hidden_states = self.self_attn(positions=positions, hidden_states=hidden_states)
         self.hook_attn_out(hidden_states)
 
+        if self.hook_resid_mid.enabled:
+            self.hook_resid_mid(hidden_states + residual)
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
-        self.hook_resid_mid(residual)
         self.hook_ln2(hidden_states)
         self.hook_mlp_in(hidden_states)
         hidden_states = self.mlp(hidden_states)

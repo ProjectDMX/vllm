@@ -216,8 +216,8 @@ class Qwen3DecoderLayer(nn.Module):
         # BENCH_OFF attn_out: self._buf_attn_out[:hidden_states.shape[0]].copy_(hidden_states)
 
         # Fully Connected
+        # BENCH_OFF resid_mid: self._buf_resid_mid[:hidden_states.shape[0]].copy_(hidden_states + residual)
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
-        # BENCH_OFF resid_mid: self._buf_resid_mid[:residual.shape[0]].copy_(residual)
         # BENCH_OFF ln2: self._buf_ln2[:hidden_states.shape[0]].copy_(hidden_states)
         # BENCH_OFF mlp_in: self._buf_mlp_in[:hidden_states.shape[0]].copy_(hidden_states)
         hidden_states = self.mlp(hidden_states)

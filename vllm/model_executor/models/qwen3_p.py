@@ -51,7 +51,7 @@ from vllm.transformers_utils.config import set_default_rope_theta
 from vllm.v1.attention.backend import AttentionType
 
 from .interfaces import SupportsEagle3, SupportsLoRA, SupportsPP
-from .qwen2 import Qwen2MLP as Qwen3MLP
+from .qwen2 import Qwen2MLP as _Qwen2MLP
 from .qwen2 import Qwen2Model
 from .utils import AutoWeightsLoader, PPMissingLayer, extract_layer_index, maybe_prefix
 
@@ -61,12 +61,27 @@ from monitoring.ring_transport import (
     HOOK_TYPE_RESID_PRE, HOOK_TYPE_LN1, HOOK_TYPE_ATTN_OUT,
     HOOK_TYPE_RESID_MID, HOOK_TYPE_Q, HOOK_TYPE_K, HOOK_TYPE_V,
     HOOK_TYPE_Z, HOOK_TYPE_LN2,
-    HOOK_TYPE_MLP_IN, HOOK_TYPE_MLP_OUT, HOOK_TYPE_RESID_FINAL,
+    HOOK_TYPE_MLP_IN, HOOK_TYPE_MLP_OUT, HOOK_TYPE_MLP_POST, HOOK_TYPE_RESID_FINAL,
     HOOK_TYPE_EMBED, HOOK_TYPE_FINAL_LN, HOOK_TYPE_FINAL_LOGITS,
     HOOK_TYPE_TOKEN_IDS,
 )
 
 logger = init_logger(__name__)
+
+
+class Qwen3MLP(_Qwen2MLP):
+    """Qwen3 MLP with hook_post (after activation, before down_proj)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.hook_post = HookPoint()
+
+    def forward(self, x):
+        gate_up, _ = self.gate_up_proj(x)
+        x = self.act_fn(gate_up)
+        self.hook_post(x)
+        x, _ = self.down_proj(x)
+        return x
 
 
 class Qwen3Attention(nn.Module):
@@ -441,6 +456,7 @@ class Qwen3PForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle3):
             specs.append(HookSpec(HOOK_TYPE_RESID_MID, layer.hook_resid_mid, layer_no=i))
             specs.append(HookSpec(HOOK_TYPE_LN2, layer.hook_ln2, layer_no=i))
             specs.append(HookSpec(HOOK_TYPE_MLP_IN, layer.hook_mlp_in, layer_no=i))
+            specs.append(HookSpec(HOOK_TYPE_MLP_POST, layer.mlp.hook_post, layer_no=i))
             specs.append(HookSpec(HOOK_TYPE_MLP_OUT, layer.hook_mlp_out, layer_no=i))
         specs.append(HookSpec(HOOK_TYPE_RESID_FINAL, m.hook_resid_final))
         specs.append(HookSpec(HOOK_TYPE_FINAL_LN, m.hook_final_ln))

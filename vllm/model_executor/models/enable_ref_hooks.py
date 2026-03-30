@@ -20,7 +20,7 @@ _HOOK_SHORTCUTS = {
     "all": [
         "token_ids", "embed", "pos_embed",
         "resid_pre", "ln1", "q", "k", "v", "z",
-        "attn_out", "resid_mid", "ln2", "mlp_in", "mlp_out",
+        "attn_out", "resid_mid", "ln2", "mlp_in", "mlp_post", "mlp_out",
         "resid_final", "final_ln", "final_logits",
     ],
     "hidden-states": ["resid_pre"],
@@ -29,7 +29,7 @@ _HOOK_SHORTCUTS = {
     "vllm-full": [
         "token_ids", "embed", "pos_embed",
         "resid_pre", "ln1", "q", "k", "v", "z",
-        "attn_out", "resid_mid", "ln2", "mlp_in", "mlp_out",
+        "attn_out", "resid_mid", "ln2", "mlp_in", "mlp_post", "mlp_out",
         "resid_final", "final_ln", "final_logits",
     ],
 }

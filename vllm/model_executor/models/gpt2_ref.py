@@ -115,6 +115,7 @@ class GPT2MLP(nn.Module):
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states, _ = self.c_fc(hidden_states)
         hidden_states = self.act(hidden_states)
+        # BENCH_OFF mlp_post: self._buf_mlp_post[:hidden_states.shape[0]].copy_(hidden_states)
         hidden_states, _ = self.c_proj(hidden_states)
         return hidden_states
 
@@ -252,6 +253,7 @@ class GPT2RefLMHeadModel(nn.Module, SupportsPP):
         H = config.hidden_size                          # 768 for GPT-2
         n_heads = config.num_attention_heads             # 12
         head_dim = H // n_heads                          # 64
+        inner_dim = config.n_inner if config.n_inner is not None else 4 * H  # 3072
         vocab_size = config.vocab_size                   # 50257
         dt = vllm_config.model_config.dtype or torch.bfloat16
 
@@ -283,6 +285,8 @@ class GPT2RefLMHeadModel(nn.Module, SupportsPP):
                 block._buf_mlp_in = _alloc(max_len, H)
             if "mlp_out" in enabled:
                 block._buf_mlp_out = _alloc(max_len, H)
+            if "mlp_post" in enabled:
+                block.mlp._buf_mlp_post = _alloc(max_len, inner_dim)
             if "q" in enabled:
                 attn._buf_q = _alloc(max_len, n_heads, head_dim)
             if "k" in enabled:
@@ -311,6 +315,10 @@ class GPT2RefLMHeadModel(nn.Module, SupportsPP):
                 v = getattr(block, attr, None)
                 if v is not None:
                     bufs[f"{attr[5:]}_L{i}"] = v
+            # MLP internal hook (on block.mlp, not block)
+            v = getattr(block.mlp, "_buf_mlp_post", None)
+            if v is not None:
+                bufs[f"mlp_post_L{i}"] = v
             for attr in ("_buf_q", "_buf_k", "_buf_v", "_buf_z"):
                 v = getattr(attn, attr, None)
                 if v is not None:

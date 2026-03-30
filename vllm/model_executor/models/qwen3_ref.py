@@ -33,11 +33,22 @@ from vllm.transformers_utils.config import set_default_rope_theta
 from vllm.v1.attention.backend import AttentionType
 
 from .interfaces import SupportsEagle3, SupportsLoRA, SupportsPP
-from .qwen2 import Qwen2MLP as Qwen3MLP
+from .qwen2 import Qwen2MLP as _Qwen2MLP
 from .qwen2 import Qwen2Model
 from .utils import AutoWeightsLoader, PPMissingLayer, extract_layer_index, maybe_prefix
 
 logger = init_logger(__name__)
+
+
+class Qwen3MLP(_Qwen2MLP):
+    """Qwen3 MLP with BENCH_OFF mlp_post support."""
+
+    def forward(self, x):
+        gate_up, _ = self.gate_up_proj(x)
+        x = self.act_fn(gate_up)
+        # BENCH_OFF mlp_post: self._buf_mlp_post[:x.shape[0]].copy_(x)
+        x, _ = self.down_proj(x)
+        return x
 
 
 class Qwen3Attention(nn.Module):
@@ -369,6 +380,8 @@ class Qwen3RefForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle3):
                 layer._buf_mlp_in = torch.empty(max_len, H, device=device, dtype=dtype)
             if "mlp_out" in enabled:
                 layer._buf_mlp_out = torch.empty(max_len, H, device=device, dtype=dtype)
+            if "mlp_post" in enabled:
+                layer.mlp._buf_mlp_post = torch.empty(max_len, config.intermediate_size, device=device, dtype=dtype)
             if "q" in enabled:
                 attn._buf_q = torch.empty(max_len, nh, hd, device=device, dtype=dtype)
             if "k" in enabled:
@@ -397,6 +410,10 @@ class Qwen3RefForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle3):
                          "_buf_resid_mid", "_buf_ln2", "_buf_mlp_in", "_buf_mlp_out"):
                 if hasattr(layer, attr):
                     bufs[f"{attr[5:]}_L{i}"] = getattr(layer, attr)
+            # MLP internal hook (on layer.mlp, not layer)
+            v = getattr(layer.mlp, "_buf_mlp_post", None)
+            if v is not None:
+                bufs[f"mlp_post_L{i}"] = v
             for attr in ("_buf_q", "_buf_k", "_buf_v", "_buf_z"):
                 if hasattr(attn, attr):
                     bufs[f"{attr[5:]}_L{i}"] = getattr(attn, attr)

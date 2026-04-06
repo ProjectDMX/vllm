@@ -47,7 +47,7 @@ from monitoring.ring_transport import (
     HOOK_TYPE_RESID_PRE, HOOK_TYPE_LN1, HOOK_TYPE_ATTN_OUT,
     HOOK_TYPE_RESID_MID, HOOK_TYPE_Q, HOOK_TYPE_K, HOOK_TYPE_V,
     HOOK_TYPE_Z, HOOK_TYPE_LN2,
-    HOOK_TYPE_MLP_IN, HOOK_TYPE_MLP_OUT, HOOK_TYPE_RESID_FINAL,
+    HOOK_TYPE_MLP_IN, HOOK_TYPE_MLP_OUT, HOOK_TYPE_MLP_POST, HOOK_TYPE_RESID_FINAL,
     HOOK_TYPE_EMBED, HOOK_TYPE_POS_EMBED, HOOK_TYPE_FINAL_LN,
     HOOK_TYPE_FINAL_LOGITS, HOOK_TYPE_TOKEN_IDS,
 )
@@ -126,10 +126,12 @@ class GPT2MLP(nn.Module):
             bias=True, quant_config=quant_config, prefix=f"{prefix}.c_proj",
         )
         self.act = get_act_fn(config.activation_function)
+        self.hook_post = HookPoint()
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states, _ = self.c_fc(hidden_states)
         hidden_states = self.act(hidden_states)
+        self.hook_post(hidden_states)
         hidden_states, _ = self.c_proj(hidden_states)
         return hidden_states
 
@@ -345,6 +347,7 @@ class GPT2PLMHeadModel(nn.Module, SupportsPP):
             specs.append(HookSpec(HOOK_TYPE_RESID_MID, block.hook_resid_mid, layer_no=i))
             specs.append(HookSpec(HOOK_TYPE_LN2, block.hook_ln2, layer_no=i))
             specs.append(HookSpec(HOOK_TYPE_MLP_IN, block.hook_mlp_in, layer_no=i))
+            specs.append(HookSpec(HOOK_TYPE_MLP_POST, block.mlp.hook_post, layer_no=i))
             specs.append(HookSpec(HOOK_TYPE_MLP_OUT, block.hook_mlp_out, layer_no=i))
 
         specs.append(HookSpec(HOOK_TYPE_RESID_FINAL, tr.hook_resid_final))

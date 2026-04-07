@@ -257,6 +257,12 @@ class GPT2RefLMHeadModel(nn.Module, SupportsPP):
         vocab_size = config.vocab_size                   # 50257
         dt = vllm_config.model_config.dtype or torch.bfloat16
 
+        # TP: per-rank dimensions for sharded hooks
+        from vllm.distributed.parallel_state import get_tensor_model_parallel_world_size
+        tp = get_tensor_model_parallel_world_size()
+        n_heads_tp = n_heads // tp
+        inner_dim_tp = inner_dim // tp
+
         def _alloc(*shape, dtype=dt):
             return torch.empty(*shape, dtype=dtype, device="cuda")
 
@@ -286,15 +292,15 @@ class GPT2RefLMHeadModel(nn.Module, SupportsPP):
             if "mlp_out" in enabled:
                 block._buf_mlp_out = _alloc(max_len, H)
             if "mlp_post" in enabled:
-                block.mlp._buf_mlp_post = _alloc(max_len, inner_dim)
+                block.mlp._buf_mlp_post = _alloc(max_len, inner_dim_tp)
             if "q" in enabled:
-                attn._buf_q = _alloc(max_len, n_heads, head_dim)
+                attn._buf_q = _alloc(max_len, n_heads_tp, head_dim)
             if "k" in enabled:
-                attn._buf_k = _alloc(max_len, n_heads, head_dim)
+                attn._buf_k = _alloc(max_len, n_heads_tp, head_dim)
             if "v" in enabled:
-                attn._buf_v = _alloc(max_len, n_heads, head_dim)
+                attn._buf_v = _alloc(max_len, n_heads_tp, head_dim)
             if "z" in enabled:
-                attn._buf_z = _alloc(max_len, H)
+                attn._buf_z = _alloc(max_len, n_heads_tp * head_dim)
         if "final_logits" in enabled:
             self._buf_final_logits = _alloc(max_len, vocab_size, dtype=torch.float32)
         if "token_ids" in enabled:

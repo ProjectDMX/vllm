@@ -44,6 +44,11 @@ _MODEL_META = {
         "num_layers": 28, "hidden_dim": 1024, "vocab_size": 151936,
         "num_heads": 16, "head_dim": 64, "num_kv_heads": 8,
     },
+    "llama": {
+        # meta-llama/Llama-3.1-8B
+        "num_layers": 32, "hidden_dim": 4096, "vocab_size": 128256,
+        "num_heads": 32, "head_dim": 128, "num_kv_heads": 8,
+    },
 }
 
 _BENCH_OFF_RE = re.compile(r"^(\s*)# BENCH_OFF (\w+): (.*)$")
@@ -91,6 +96,8 @@ def enable_ref_hooks(
         model_key = "gpt2"
     elif "qwen3" in basename:
         model_key = "qwen3"
+    elif "llama" in basename:
+        model_key = "llama"
     else:
         model_key = "unknown"
 

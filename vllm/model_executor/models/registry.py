@@ -144,6 +144,9 @@ _TEXT_GENERATION_MODELS = {
     "Lfm2MoeForCausalLM": ("lfm2_moe", "Lfm2MoeForCausalLM"),
     "LagunaForCausalLM": ("laguna", "LagunaForCausalLM"),
     "LlamaForCausalLM": ("llama", "LlamaForCausalLM"),
+    "LlamaPForCausalLM": ("llama_p", "LlamaPForCausalLM"),
+    "LlamaCompareForCausalLM": ("llama_compare", "LlamaCompareForCausalLM"),
+    "LlamaRefForCausalLM": ("llama_ref", "LlamaRefForCausalLM"),
     "Llama4ForCausalLM": ("llama4", "Llama4ForCausalLM"),
     # For decapoda-research/llama-*
     "LLaMAForCausalLM": ("llama", "LlamaForCausalLM"),

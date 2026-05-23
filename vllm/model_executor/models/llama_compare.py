@@ -634,25 +634,29 @@ class LlamaCompareForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle
     def get_hook_specs(self) -> list[HookSpec]:
         specs: list[HookSpec] = []
         m = self.model
-        specs.append(HookSpec(HOOK_TYPE_TOKEN_IDS, self.hook_token_ids))
-        specs.append(HookSpec(HOOK_TYPE_EMBED, m.hook_embed))
+        # vLLM flat layout: dim-0 of every per-token hook is total_tokens.
+        # Mark these specs so the vLLM adapter (when padding_strip=True)
+        # can substitute actual_q_len for q_len in shape + reservation.
+        # Excluded: FINAL_LOGITS (dim-0 = num_requests, not total_tokens).
+        specs.append(HookSpec(HOOK_TYPE_TOKEN_IDS, self.hook_token_ids, dtype=torch.int32, dim0_is_actual_tokens=True))
+        specs.append(HookSpec(HOOK_TYPE_EMBED, m.hook_embed, dim0_is_actual_tokens=True))
         for i in range(m.start_layer, m.end_layer):
             layer = m.layers[i]
             if isinstance(layer, PPMissingLayer):
                 continue
             attn = layer.self_attn
-            specs.append(HookSpec(HOOK_TYPE_RESID_PRE, layer.hook_resid_pre, layer_no=i))
-            specs.append(HookSpec(HOOK_TYPE_LN1, layer.hook_ln1, layer_no=i))
-            specs.append(HookSpec(HOOK_TYPE_Q, attn.hook_q, layer_no=i))
-            specs.append(HookSpec(HOOK_TYPE_K, attn.hook_k, layer_no=i))
-            specs.append(HookSpec(HOOK_TYPE_V, attn.hook_v, layer_no=i))
-            specs.append(HookSpec(HOOK_TYPE_Z, attn.hook_z, layer_no=i))
-            specs.append(HookSpec(HOOK_TYPE_ATTN_OUT, layer.hook_attn_out, layer_no=i))
-            specs.append(HookSpec(HOOK_TYPE_RESID_MID, layer.hook_resid_mid, layer_no=i))
-            specs.append(HookSpec(HOOK_TYPE_LN2, layer.hook_ln2, layer_no=i))
-            specs.append(HookSpec(HOOK_TYPE_MLP_IN, layer.hook_mlp_in, layer_no=i))
-            specs.append(HookSpec(HOOK_TYPE_MLP_OUT, layer.hook_mlp_out, layer_no=i))
-        specs.append(HookSpec(HOOK_TYPE_RESID_FINAL, m.hook_resid_final))
-        specs.append(HookSpec(HOOK_TYPE_FINAL_LN, m.hook_final_ln))
+            specs.append(HookSpec(HOOK_TYPE_RESID_PRE, layer.hook_resid_pre, layer_no=i, dim0_is_actual_tokens=True))
+            specs.append(HookSpec(HOOK_TYPE_LN1, layer.hook_ln1, layer_no=i, dim0_is_actual_tokens=True))
+            specs.append(HookSpec(HOOK_TYPE_Q, attn.hook_q, layer_no=i, dim0_is_actual_tokens=True))
+            specs.append(HookSpec(HOOK_TYPE_K, attn.hook_k, layer_no=i, dim0_is_actual_tokens=True))
+            specs.append(HookSpec(HOOK_TYPE_V, attn.hook_v, layer_no=i, dim0_is_actual_tokens=True))
+            specs.append(HookSpec(HOOK_TYPE_Z, attn.hook_z, layer_no=i, dim0_is_actual_tokens=True))
+            specs.append(HookSpec(HOOK_TYPE_ATTN_OUT, layer.hook_attn_out, layer_no=i, dim0_is_actual_tokens=True))
+            specs.append(HookSpec(HOOK_TYPE_RESID_MID, layer.hook_resid_mid, layer_no=i, dim0_is_actual_tokens=True))
+            specs.append(HookSpec(HOOK_TYPE_LN2, layer.hook_ln2, layer_no=i, dim0_is_actual_tokens=True))
+            specs.append(HookSpec(HOOK_TYPE_MLP_IN, layer.hook_mlp_in, layer_no=i, dim0_is_actual_tokens=True))
+            specs.append(HookSpec(HOOK_TYPE_MLP_OUT, layer.hook_mlp_out, layer_no=i, dim0_is_actual_tokens=True))
+        specs.append(HookSpec(HOOK_TYPE_RESID_FINAL, m.hook_resid_final, dim0_is_actual_tokens=True))
+        specs.append(HookSpec(HOOK_TYPE_FINAL_LN, m.hook_final_ln, dim0_is_actual_tokens=True))
         specs.append(HookSpec(HOOK_TYPE_FINAL_LOGITS, self.hook_final_logits))
         return specs

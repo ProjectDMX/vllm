@@ -49,6 +49,10 @@ _MODEL_META = {
         "num_layers": 32, "hidden_dim": 4096, "vocab_size": 128256,
         "num_heads": 32, "head_dim": 128, "num_kv_heads": 8,
     },
+    "qwen2_moe": {
+        "num_layers": 24, "hidden_dim": 2048, "vocab_size": 151936,
+        "num_heads": 16, "head_dim": 128, "num_kv_heads": 16,
+    },
 }
 
 _BENCH_OFF_RE = re.compile(r"^(\s*)# BENCH_OFF (\w+): (.*)$")
@@ -62,9 +66,16 @@ def enable_ref_hooks(
     config_out: str,
 ) -> dict:
     """Uncomment BENCH_OFF lines for selected hooks, write config JSON."""
+    basename = os.path.basename(model_file)
+
     # Resolve hook names
     if isinstance(hooks, str):
         hooks = _HOOK_SHORTCUTS.get(hooks, hooks.split(","))
+    if "qwen2_moe" in basename:
+        hooks = list(hooks)
+        for extra in ("router_logits", "topk_ids", "topk_weights"):
+            if extra not in hooks:
+                hooks.append(extra)
     enabled = set(hooks)
 
     # Read model file
@@ -91,11 +102,12 @@ def enable_ref_hooks(
         f.writelines(new_lines)
 
     # Detect model from filename
-    basename = os.path.basename(model_file)
     if "gpt2" in basename:
         model_key = "gpt2"
     elif "qwen3" in basename:
         model_key = "qwen3"
+    elif "qwen2_moe" in basename:
+        model_key = "qwen2_moe"
     elif "llama" in basename:
         model_key = "llama"
     else:

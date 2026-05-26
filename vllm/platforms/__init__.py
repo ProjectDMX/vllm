@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import logging
+import os
 import traceback
 from itertools import chain
 from typing import TYPE_CHECKING
@@ -184,6 +185,23 @@ builtin_platform_plugins = {
 
 
 def resolve_current_platform_cls_qualname() -> str:
+    forced_target = os.environ.get("VLLM_TARGET_DEVICE", "").strip().lower()
+    if forced_target:
+        if forced_target not in builtin_platform_plugins:
+            raise RuntimeError(
+                "Unsupported VLLM_TARGET_DEVICE="
+                f"{forced_target!r}. Expected one of "
+                f"{sorted(builtin_platform_plugins)}."
+            )
+        platform_cls_qualname = builtin_platform_plugins[forced_target]()
+        if platform_cls_qualname is None:
+            raise RuntimeError(
+                f"VLLM_TARGET_DEVICE={forced_target!r} was requested, "
+                "but that platform is not available on this host."
+            )
+        logger.info("Using forced platform from VLLM_TARGET_DEVICE=%s", forced_target)
+        return platform_cls_qualname
+
     platform_plugins = load_plugins_by_group(PLATFORM_PLUGINS_GROUP)
 
     activated_plugins = []

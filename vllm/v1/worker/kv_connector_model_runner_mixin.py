@@ -29,36 +29,13 @@ from vllm.v1.outputs import (
     KVConnectorOutput,
     ModelRunnerOutput,
 )
+from vllm.v1.worker.dmi_pcie_hint import emit_dmi_pcie_hint as _emit_dmi_pcie_hint
 from vllm.v1.worker.utils import AttentionGroup
 
 if TYPE_CHECKING:
     from vllm.v1.core.sched.output import SchedulerOutput
 
 logger = init_logger(__name__)
-
-
-def _emit_dmi_pcie_hint(
-    *,
-    direction: str,
-    source: str,
-    est_bytes: int = 0,
-    valid_until_ns: int = 0,
-) -> None:
-    """Best-effort DMI PCIe hint; disabled/unavailable governor is a no-op."""
-
-    try:
-        from monitoring.governor import emit_hint
-    except Exception:
-        return
-    try:
-        emit_hint(
-            direction=direction,
-            source=source,
-            est_bytes=est_bytes,
-            valid_until_ns=valid_until_ns,
-        )
-    except Exception:
-        return
 
 
 # Defined as a kv connector functionality mixin for ModelRunner (GPU, TPU)
@@ -123,7 +100,6 @@ class KVConnectorModelRunnerMixin:
         # These transfers are designed to be async and the requests
         # involved may be disjoint from the running requests.
         # Do this here to save a collective_rpc.
-        _emit_dmi_pcie_hint(direction="H2D", source="kv_load")
         kv_connector.start_load_kv(get_forward_context())
         try:
             yield output

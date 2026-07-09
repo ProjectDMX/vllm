@@ -23,33 +23,10 @@ from vllm.v1.outputs import (
     KVConnectorOutput,
     ModelRunnerOutput,
 )
+from vllm.v1.worker.dmi_pcie_hint import emit_dmi_pcie_hint as _emit_dmi_pcie_hint
 
 if TYPE_CHECKING:
     from vllm.v1.core.sched.output import SchedulerOutput
-
-
-def _emit_dmi_pcie_hint(
-    *,
-    direction: str,
-    source: str,
-    est_bytes: int = 0,
-    valid_until_ns: int = 0,
-) -> None:
-    """Best-effort DMI PCIe hint; disabled/unavailable governor is a no-op."""
-
-    try:
-        from monitoring.governor import emit_hint
-    except Exception:
-        return
-    try:
-        emit_hint(
-            direction=direction,
-            source=source,
-            est_bytes=est_bytes,
-            valid_until_ns=valid_until_ns,
-        )
-    except Exception:
-        return
 
 
 class KVConnector:
@@ -93,8 +70,6 @@ class ActiveKVConnector(KVConnector):
         kv_connector_metadata = scheduler_output.kv_connector_metadata
         assert kv_connector_metadata is not None
         self.kv_connector.bind_connector_metadata(kv_connector_metadata)
-
-        _emit_dmi_pcie_hint(direction="H2D", source="kv_load")
 
         # TODO: sort out KV Connectors' use of forward_context
         if is_forward_context_available():

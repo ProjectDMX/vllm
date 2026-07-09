@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import copy
+import time
 from typing import TYPE_CHECKING
 
 import torch
@@ -25,6 +26,30 @@ from vllm.v1.outputs import (
 
 if TYPE_CHECKING:
     from vllm.v1.core.sched.output import SchedulerOutput
+
+
+def _emit_dmi_pcie_hint(
+    *,
+    direction: str,
+    source: str,
+    est_bytes: int = 0,
+    valid_until_ns: int = 0,
+) -> None:
+    """Best-effort DMI PCIe hint; disabled/unavailable governor is a no-op."""
+
+    try:
+        from monitoring.governor import emit_hint
+    except Exception:
+        return
+    try:
+        emit_hint(
+            direction=direction,
+            source=source,
+            est_bytes=est_bytes,
+            valid_until_ns=valid_until_ns,
+        )
+    except Exception:
+        return
 
 
 class KVConnector:
@@ -69,6 +94,8 @@ class ActiveKVConnector(KVConnector):
         assert kv_connector_metadata is not None
         self.kv_connector.bind_connector_metadata(kv_connector_metadata)
 
+        _emit_dmi_pcie_hint(direction="H2D", source="kv_load")
+
         # TODO: sort out KV Connectors' use of forward_context
         if is_forward_context_available():
             self.kv_connector.start_load_kv(get_forward_context())
@@ -87,7 +114,15 @@ class ActiveKVConnector(KVConnector):
 
         output = KVConnectorOutput()
         if wait_for_save:
-            self.kv_connector.wait_for_save()
+            _emit_dmi_pcie_hint(direction="D2H", source="kv_store")
+            try:
+                self.kv_connector.wait_for_save()
+            finally:
+                _emit_dmi_pcie_hint(
+                    direction="D2H",
+                    source="kv_store",
+                    valid_until_ns=time.monotonic_ns(),
+                )
         output.finished_sending, output.finished_recving = (
             self.kv_connector.get_finished(scheduler_output.finished_req_ids)
         )

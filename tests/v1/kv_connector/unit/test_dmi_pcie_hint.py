@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import time
 from contextlib import nullcontext
 from types import SimpleNamespace
 
@@ -8,7 +9,10 @@ import pytest
 import torch
 
 from vllm.distributed.kv_transfer import dmi_pcie_hint
-from vllm.distributed.kv_transfer.kv_connector.v1 import lmcache_mp_connector
+from vllm.distributed.kv_transfer.kv_connector.v1 import (
+    lmcache_connector,
+    lmcache_mp_connector,
+)
 from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorRole
 from vllm.distributed.kv_transfer.kv_connector.v1.lmcache_connector import (
     LMCacheConnectorV1,
@@ -263,6 +267,38 @@ def test_lmcache_does_not_hint_when_step_has_no_store(monkeypatch):
     assert hints == []
 
 
+def test_lmcache_unknown_save_spec_shape_fails_open_with_warning(monkeypatch):
+    hints = capture_hints(monkeypatch)
+    warnings = []
+    monkeypatch.setattr(
+        lmcache_connector.logger,
+        "warning_once",
+        lambda message, *args: warnings.append(message % args),
+    )
+    connector, calls = make_lmcache_connector(layerwise=False)
+    connector.bind_connector_metadata(
+        SimpleNamespace(
+            requests=[
+                SimpleNamespace(
+                    token_ids=[1, 2, 3],
+                    save_spec=SimpleNamespace(skip_leading_tokens=0),
+                )
+            ]
+        )
+    )
+
+    connector.save_kv_layer("layer.0", object(), object())
+    connector.wait_for_save()
+
+    assert connector._dmi_step_has_store is True
+    assert calls == [("save", False), ("wait", True)]
+    assert [hint["valid_until_ns"] == 0 for hint in hints] == [True, False]
+    assert warnings == [
+        "LMCache save_spec has no can_save field; emitting a conservative "
+        "DMI PCIe store hint"
+    ]
+
+
 def test_layerwise_lmcache_ends_hint_when_save_raises(monkeypatch):
     hints = capture_hints(monkeypatch)
     connector, _ = make_lmcache_connector(layerwise=True)
@@ -343,6 +379,15 @@ def wait_for_store_watcher(connector) -> None:
         watcher.join(timeout=1.0)
 
 
+def wait_until(predicate, timeout_s: float = 1.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.001)
+    raise AssertionError("condition did not become true before timeout")
+
+
 def patch_cuda_event_recording(monkeypatch) -> None:
     monkeypatch.setattr(lmcache_mp_connector.torch.cuda, "Event", FakeCudaEvent)
     monkeypatch.setattr(
@@ -410,6 +455,34 @@ def test_lmcache_mp_watcher_ends_hint_without_another_serving_step(monkeypatch):
 
     assert connector._dmi_store_hint.active is False
     assert [hint["valid_until_ns"] == 0 for hint in hints] == [True, False]
+
+
+def test_lmcache_mp_watcher_renews_while_store_future_remains_pending(monkeypatch):
+    hints = capture_hints(monkeypatch)
+    patch_cuda_event_recording(monkeypatch)
+    connector = make_lmcache_mp_connector()
+    clock = FakeClock()
+    connector._dmi_store_hint = dmi_pcie_hint.D2HHintLease(
+        "lmcache_mp_store",
+        renew_interval_ns=100_000_000,
+        clock_ns=clock,
+    )
+
+    connector.wait_for_save()
+    clock.advance_ms(100)
+    connector._dmi_store_wake.set()
+    wait_until(lambda: len(hints) >= 2)
+
+    assert connector._dmi_store_hint.active is True
+    assert [hint["valid_until_ns"] == 0 for hint in hints] == [True, True]
+
+    future = connector.worker_adapter.store_futures["request-0"]
+    future.done = True
+    connector._dmi_store_wake.set()
+    wait_for_store_watcher(connector)
+
+    assert connector._dmi_store_hint.active is False
+    assert [hint["valid_until_ns"] == 0 for hint in hints] == [True, True, False]
 
 
 class FakeWorkerConnector:

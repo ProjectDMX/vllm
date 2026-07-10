@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from vllm.v1.request import Request
 
 logger = lmcache_init_logger(__name__)
+_DMI_STORE_POLL_INTERVAL_S = 0.020
 
 
 # Helper functions
@@ -513,7 +514,7 @@ class LMCacheMPConnector(KVConnectorBase_V1):
                 self._dmi_store_hint.renew()
                 self._dmi_store_wake.clear()
 
-            self._dmi_store_wake.wait(timeout=0.005)
+            self._dmi_store_wake.wait(timeout=_DMI_STORE_POLL_INTERVAL_S)
 
     def _dmi_stop_store_watcher(self) -> None:
         with self._dmi_store_lock:

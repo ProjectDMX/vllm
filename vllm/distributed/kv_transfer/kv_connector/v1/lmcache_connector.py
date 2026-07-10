@@ -138,6 +138,16 @@ class LMCacheConnectorV1(KVConnectorBase_V1):
             # request-level save specs. The lifecycle remains bounded by wait/end.
             return True
 
+        try:
+            requests = list(requests)
+        except Exception as exc:
+            logger.warning_once(
+                "Unknown LMCache request metadata container (%s); emitting a "
+                "conservative DMI PCIe store hint",
+                type(exc).__name__,
+            )
+            return True
+
         kv_role = getattr(
             self._lmcache_engine, "kv_role", self._kv_transfer_config.kv_role
         )
@@ -145,18 +155,66 @@ class LMCacheConnectorV1(KVConnectorBase_V1):
         if kv_role == "kv_consumer":
             return False
 
+        missing = object()
         for request in requests:
             token_ids = getattr(request, "token_ids", None)
-            if token_ids is not None and len(token_ids) == 0:
-                continue
+            if token_ids is not None:
+                try:
+                    if len(token_ids) == 0:
+                        continue
+                except Exception as exc:
+                    logger.warning_once(
+                        "Unknown LMCache token_ids shape (%s); emitting a "
+                        "conservative DMI PCIe store hint",
+                        type(exc).__name__,
+                    )
+                    return True
 
-            save_spec = getattr(request, "save_spec", None)
-            if not is_producer and (
-                save_spec is None or not bool(getattr(save_spec, "can_save", False))
-            ):
-                continue
+            save_spec = getattr(request, "save_spec", missing)
+            if not is_producer:
+                if save_spec is missing:
+                    logger.warning_once(
+                        "Unknown LMCache save_spec shape; emitting a conservative "
+                        "DMI PCIe store hint"
+                    )
+                    return True
+                if save_spec is None:
+                    continue
+                can_save = getattr(save_spec, "can_save", missing)
+                if can_save is missing:
+                    logger.warning_once(
+                        "LMCache save_spec has no can_save field; emitting a "
+                        "conservative DMI PCIe store hint"
+                    )
+                    return True
+                try:
+                    should_save = bool(can_save)
+                except Exception as exc:
+                    logger.warning_once(
+                        "Unknown LMCache can_save value (%s); emitting a "
+                        "conservative DMI PCIe store hint",
+                        type(exc).__name__,
+                    )
+                    return True
+                if not should_save:
+                    continue
 
-            skip = int(getattr(save_spec, "skip_leading_tokens", 0) or 0)
+            skip_value = getattr(save_spec, "skip_leading_tokens", missing)
+            if skip_value is missing:
+                logger.warning_once(
+                    "LMCache save_spec has no skip_leading_tokens field; emitting "
+                    "a conservative DMI PCIe store hint"
+                )
+                return True
+            try:
+                skip = int(skip_value or 0)
+            except Exception as exc:
+                logger.warning_once(
+                    "Unknown LMCache skip_leading_tokens value (%s); emitting a "
+                    "conservative DMI PCIe store hint",
+                    type(exc).__name__,
+                )
+                return True
             if token_ids is None or skip < len(token_ids):
                 return True
 

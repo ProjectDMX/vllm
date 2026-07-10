@@ -12,6 +12,7 @@ from vllm.distributed.kv_events import (
     KVConnectorKVEvents,
     KVEventAggregator,
 )
+from vllm.distributed.kv_transfer.dmi_pcie_hint import D2HHintLease
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorBase_V1,
     KVConnectorMetadata,
@@ -70,6 +71,8 @@ class LMCacheKVEvents(KVConnectorKVEvents):
 
 
 class LMCacheConnectorV1(KVConnectorBase_V1):
+    manages_dmi_pcie_hints = True
+
     @classmethod
     def requires_piecewise_for_cudagraph(cls, extra_config: dict[str, Any]) -> bool:
         """
@@ -111,12 +114,69 @@ class LMCacheConnectorV1(KVConnectorBase_V1):
             cls = LMCacheConnectorLatestImpl
 
         self._lmcache_engine = cls(vllm_config, role, self)
+        self._dmi_store_hint = D2HHintLease("lmcache_store")
+        self._dmi_step_has_store = False
+        self._dmi_use_layerwise = bool(
+            getattr(
+                self._lmcache_engine,
+                "use_layerwise",
+                vllm_config.kv_transfer_config.get_from_extra_config(
+                    "use_layerwise", False
+                ),
+            )
+        )
 
         self._kv_cache_events: LMCacheKVEvents | None = None
+
+    def _dmi_metadata_has_store_work(self, metadata: KVConnectorMetadata) -> bool:
+        if self.role != KVConnectorRole.WORKER:
+            return False
+
+        requests = getattr(metadata, "requests", None)
+        if requests is None:
+            # Preserve compatibility with adapters whose opaque metadata predates
+            # request-level save specs. The lifecycle remains bounded by wait/end.
+            return True
+
+        kv_role = getattr(
+            self._lmcache_engine, "kv_role", self._kv_transfer_config.kv_role
+        )
+        is_producer = kv_role == "kv_producer"
+        if kv_role == "kv_consumer":
+            return False
+
+        for request in requests:
+            token_ids = getattr(request, "token_ids", None)
+            if token_ids is not None and len(token_ids) == 0:
+                continue
+
+            save_spec = getattr(request, "save_spec", None)
+            if not is_producer and (
+                save_spec is None or not bool(getattr(save_spec, "can_save", False))
+            ):
+                continue
+
+            skip = int(getattr(save_spec, "skip_leading_tokens", 0) or 0)
+            if token_ids is None or skip < len(token_ids):
+                return True
+
+        return False
+
+    def _dmi_start_or_renew_store_hint(self) -> None:
+        if not self._dmi_step_has_store:
+            return
+        if self._dmi_store_hint.active:
+            self._dmi_store_hint.renew()
+        else:
+            self._dmi_store_hint.start()
 
     # ==============================
     # Worker-side methods
     # ==============================
+    def bind_connector_metadata(self, connector_metadata: KVConnectorMetadata) -> None:
+        super().bind_connector_metadata(connector_metadata)
+        self._dmi_step_has_store = self._dmi_metadata_has_store_work(connector_metadata)
+
     def register_kv_caches(self, kv_caches: dict[str, torch.Tensor]):
         """
         Initialize with the KV caches. Useful for pre-registering the
@@ -182,9 +242,15 @@ class LMCacheConnectorV1(KVConnectorBase_V1):
             attn_metadata (AttentionMetadata): the attention metadata.
             **kwargs: additional arguments for the save operation.
         """
-        self._lmcache_engine.save_kv_layer(
-            layer_name, kv_layer, attn_metadata, **kwargs
-        )
+        if self._dmi_use_layerwise:
+            self._dmi_start_or_renew_store_hint()
+        try:
+            self._lmcache_engine.save_kv_layer(
+                layer_name, kv_layer, attn_metadata, **kwargs
+            )
+        except Exception:
+            self._dmi_store_hint.finish()
+            raise
 
     def wait_for_save(self):
         """
@@ -194,7 +260,21 @@ class LMCacheConnectorV1(KVConnectorBase_V1):
 
         This prevents overwrites of paged KV buffer before saving done.
         """
-        self._lmcache_engine.wait_for_save()
+        if not self._dmi_use_layerwise:
+            self._dmi_start_or_renew_store_hint()
+        try:
+            self._lmcache_engine.wait_for_save()
+        finally:
+            self._dmi_store_hint.finish()
+
+    def clear_connector_metadata(self) -> None:
+        self._dmi_store_hint.finish()
+        self._dmi_step_has_store = False
+        super().clear_connector_metadata()
+
+    def shutdown(self):
+        self._dmi_store_hint.finish()
+        return None
 
     def get_finished(
         self, finished_req_ids: set[str]

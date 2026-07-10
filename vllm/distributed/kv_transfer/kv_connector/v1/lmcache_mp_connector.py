@@ -11,6 +11,7 @@ from lmcache.integration.vllm.utils import mla_enabled
 from lmcache.utils import init_logger as lmcache_init_logger
 
 from vllm.config import VllmConfig
+from vllm.distributed.kv_transfer.dmi_pcie_hint import D2HHintLease
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorBase_V1,
     KVConnectorMetadata,
@@ -389,6 +390,8 @@ class LMCacheMPConnector(KVConnectorBase_V1):
     - lmcache.mp.port: the port of the LMCache server.
     """
 
+    manages_dmi_pcie_hints = True
+
     def __init__(
         self,
         vllm_config: "VllmConfig",
@@ -420,6 +423,16 @@ class LMCacheMPConnector(KVConnectorBase_V1):
             raise ValueError(f"Unknown KVConnectorRole: {self.role}")
 
         self.vllm_block_size = vllm_config.cache_config.block_size
+        self._dmi_store_hint = D2HHintLease("lmcache_mp_store")
+
+    def _dmi_update_store_hint(self) -> None:
+        if self.role != KVConnectorRole.WORKER:
+            return
+        pending = bool(getattr(self.worker_adapter, "store_futures", {}))
+        if pending:
+            self._dmi_store_hint.renew()
+        else:
+            self._dmi_store_hint.finish()
 
     @property
     def role(self) -> KVConnectorRole:
@@ -482,6 +495,7 @@ class LMCacheMPConnector(KVConnectorBase_V1):
             ops.append(meta.op)
 
         if len(request_ids) == 0:
+            self._dmi_update_store_hint()
             return
 
         with torch.cuda.stream(torch.cuda.current_stream()):
@@ -550,7 +564,12 @@ class LMCacheMPConnector(KVConnectorBase_V1):
             event = torch.cuda.Event(interprocess=True)
             event.record()
 
-        self.worker_adapter.batched_submit_store_requests(request_ids, ops, event)
+        self._dmi_store_hint.start()
+        try:
+            self.worker_adapter.batched_submit_store_requests(request_ids, ops, event)
+        except Exception:
+            self._dmi_update_store_hint()
+            raise
 
     def get_finished(
         self, finished_req_ids: set[str]
@@ -568,7 +587,10 @@ class LMCacheMPConnector(KVConnectorBase_V1):
             The finished saves/sends req ids must belong to a set provided in a
             call to this method (this call or a prior one).
         """
-        val = self.worker_adapter.get_finished(finished_req_ids)
+        try:
+            val = self.worker_adapter.get_finished(finished_req_ids)
+        finally:
+            self._dmi_update_store_hint()
         # logger.error("Finished req ids: %s, %s", val[0], val[1])
         return val
 
@@ -599,8 +621,11 @@ class LMCacheMPConnector(KVConnectorBase_V1):
         is shutting down to ensure that all the async operations are
         completed and the connector is cleaned up properly.
         """
-        if hasattr(self, "worker_adapter"):
-            self.worker_adapter.shutdown()
+        try:
+            if hasattr(self, "worker_adapter"):
+                self.worker_adapter.shutdown()
+        finally:
+            self._dmi_store_hint.finish()
         return None
 
     def get_kv_connector_stats(self) -> "KVConnectorStats | None":

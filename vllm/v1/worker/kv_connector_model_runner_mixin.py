@@ -19,6 +19,12 @@ from vllm.distributed.kv_transfer import (
     get_kv_transfer_group,
     has_kv_transfer_group,
 )
+from vllm.distributed.kv_transfer.dmi_pcie_hint import (
+    connector_manages_dmi_pcie_hints,
+)
+from vllm.distributed.kv_transfer.dmi_pcie_hint import (
+    emit_dmi_pcie_hint as _emit_dmi_pcie_hint,
+)
 from vllm.distributed.kv_transfer.kv_connector.base import KVConnectorBase
 from vllm.forward_context import get_forward_context, set_forward_context
 from vllm.logger import init_logger
@@ -29,7 +35,6 @@ from vllm.v1.outputs import (
     KVConnectorOutput,
     ModelRunnerOutput,
 )
-from vllm.v1.worker.dmi_pcie_hint import emit_dmi_pcie_hint as _emit_dmi_pcie_hint
 from vllm.v1.worker.utils import AttentionGroup
 
 if TYPE_CHECKING:
@@ -105,15 +110,18 @@ class KVConnectorModelRunnerMixin:
             yield output
         finally:
             if wait_for_save:
-                _emit_dmi_pcie_hint(direction="D2H", source="kv_store")
-                try:
+                if connector_manages_dmi_pcie_hints(kv_connector):
                     kv_connector.wait_for_save()
-                finally:
-                    _emit_dmi_pcie_hint(
-                        direction="D2H",
-                        source="kv_store",
-                        valid_until_ns=time.monotonic_ns(),
-                    )
+                else:
+                    _emit_dmi_pcie_hint(direction="D2H", source="kv_store")
+                    try:
+                        kv_connector.wait_for_save()
+                    finally:
+                        _emit_dmi_pcie_hint(
+                            direction="D2H",
+                            source="kv_store",
+                            valid_until_ns=time.monotonic_ns(),
+                        )
 
             output.finished_sending, output.finished_recving = (
                 kv_connector.get_finished(scheduler_output.finished_req_ids)

@@ -432,11 +432,11 @@ class LMCacheMPConnector(KVConnectorBase_V1):
         self._dmi_store_hint = D2HHintLease("lmcache_mp_store")
         self._dmi_store_lock = threading.Lock()
         self._dmi_store_wake = threading.Event()
-        self._dmi_store_generation = 0
         self._dmi_store_submission_active = False
         self._dmi_store_shutdown = False
         self._dmi_store_watcher: threading.Thread | None = None
         self._dmi_store_started_ns = 0
+        self._dmi_store_audit_stores = 0
         self._dmi_hint_audit = os.environ.get("DMX_PCIE_HINT_AUDIT", "0").lower() in {
             "1",
             "true",
@@ -444,12 +444,13 @@ class LMCacheMPConnector(KVConnectorBase_V1):
             "on",
         }
 
-    def _dmi_begin_store_submission(self) -> None:
+    def _dmi_begin_store_submission(self, store_count: int) -> None:
         with self._dmi_store_lock:
-            self._dmi_store_generation += 1
             self._dmi_store_submission_active = True
             if not self._dmi_store_hint.active:
                 self._dmi_store_started_ns = time.monotonic_ns()
+                self._dmi_store_audit_stores = 0
+            self._dmi_store_audit_stores += max(0, int(store_count))
             self._dmi_store_hint.start()
             self._dmi_store_wake.set()
 
@@ -474,7 +475,6 @@ class LMCacheMPConnector(KVConnectorBase_V1):
                     self._dmi_store_watcher = None
                     return
 
-                generation = self._dmi_store_generation
                 pending = self._dmi_store_submission_active
                 if not pending:
                     futures = tuple(
@@ -490,21 +490,22 @@ class LMCacheMPConnector(KVConnectorBase_V1):
                             # adapter owns surfacing the operation error.
                             continue
 
-                if generation != self._dmi_store_generation:
-                    continue
                 if not pending:
                     duration_ms = (
                         (time.monotonic_ns() - self._dmi_store_started_ns) / 1_000_000
                         if self._dmi_store_started_ns > 0
                         else 0.0
                     )
+                    store_count = self._dmi_store_audit_stores
                     self._dmi_store_hint.finish()
                     self._dmi_store_started_ns = 0
+                    self._dmi_store_audit_stores = 0
                     if self._dmi_hint_audit:
                         logger.info(
                             "[DMI PCIeHint] source=lmcache_mp_store "
-                            "event=end duration_ms=%.3f",
+                            "event=end duration_ms=%.3f stores=%d",
                             duration_ms,
+                            store_count,
                         )
                     self._dmi_store_watcher = None
                     return
@@ -523,6 +524,7 @@ class LMCacheMPConnector(KVConnectorBase_V1):
             watcher.join(timeout=1.0)
         with self._dmi_store_lock:
             self._dmi_store_watcher = None
+            self._dmi_store_audit_stores = 0
             self._dmi_store_hint.finish()
 
     @property
@@ -654,7 +656,7 @@ class LMCacheMPConnector(KVConnectorBase_V1):
             event = torch.cuda.Event(interprocess=True)
             event.record()
 
-        self._dmi_begin_store_submission()
+        self._dmi_begin_store_submission(len(request_ids))
         try:
             self.worker_adapter.batched_submit_store_requests(request_ids, ops, event)
         finally:

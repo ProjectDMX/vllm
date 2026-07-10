@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import importlib
 from contextlib import nullcontext
 from types import SimpleNamespace
+
+import pytest
+import torch
 
 from vllm.distributed.kv_transfer import dmi_pcie_hint
 from vllm.distributed.kv_transfer.kv_connector.v1 import lmcache_mp_connector
@@ -115,6 +119,88 @@ class FakeLMCacheAdapter:
 
     def wait_for_save(self) -> None:
         self.calls.append(("wait", self.connector._dmi_store_hint.active))
+
+
+@pytest.mark.parametrize(
+    ("engine_layerwise", "config_layerwise", "expected"),
+    [(True, False, True), (False, True, False), (None, True, True)],
+)
+def test_lmcache_init_resolves_runtime_layerwise_mode(
+    monkeypatch, engine_layerwise, config_layerwise, expected
+):
+    adapter_module = importlib.import_module(
+        "lmcache.integration.vllm.vllm_v1_adapter"
+    )
+
+    class FakeExternalAdapter:
+        def __init__(self, _config, _role, _parent) -> None:
+            self.kv_role = "kv_both"
+            if engine_layerwise is not None:
+                self.use_layerwise = engine_layerwise
+
+    monkeypatch.setattr(
+        adapter_module,
+        "LMCacheConnectorV1Impl",
+        FakeExternalAdapter,
+    )
+    extra_config = {"use_native": False, "use_layerwise": config_layerwise}
+    kv_transfer_config = SimpleNamespace(
+        kv_role="kv_both",
+        get_from_extra_config=lambda key, default: extra_config.get(key, default),
+    )
+    connector = LMCacheConnectorV1(
+        SimpleNamespace(kv_transfer_config=kv_transfer_config),
+        KVConnectorRole.WORKER,
+        object(),
+    )
+
+    assert connector._dmi_use_layerwise is expected
+
+
+def test_lmcache_store_detection_accepts_installed_metadata_shape(monkeypatch):
+    adapter_module = importlib.import_module(
+        "lmcache.integration.vllm.vllm_v1_adapter"
+    )
+
+    class FakeExternalAdapter:
+        kv_role = "kv_both"
+        use_layerwise = True
+
+        def __init__(self, _config, _role, _parent) -> None:
+            pass
+
+    monkeypatch.setattr(
+        adapter_module,
+        "LMCacheConnectorV1Impl",
+        FakeExternalAdapter,
+    )
+    extra_config = {"use_native": False, "use_layerwise": False}
+    kv_transfer_config = SimpleNamespace(
+        kv_role="kv_both",
+        get_from_extra_config=lambda key, default: extra_config.get(key, default),
+    )
+    connector = LMCacheConnectorV1(
+        SimpleNamespace(kv_transfer_config=kv_transfer_config),
+        KVConnectorRole.WORKER,
+        object(),
+    )
+    metadata = adapter_module.LMCacheConnectorMetadata(
+        requests=[
+            adapter_module.ReqMeta(
+                req_id="request-0",
+                token_ids=[1, 2, 3],
+                slot_mapping=torch.empty(0, dtype=torch.long),
+                save_spec=adapter_module.SaveSpec(
+                    skip_leading_tokens=0,
+                    can_save=True,
+                ),
+            )
+        ]
+    )
+
+    connector.bind_connector_metadata(metadata)
+
+    assert connector._dmi_step_has_store is True
 
 
 def make_lmcache_connector(*, layerwise: bool, can_save: bool = True):

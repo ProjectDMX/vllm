@@ -162,13 +162,10 @@ class LMCacheConnectorV1(KVConnectorBase_V1):
 
         return False
 
-    def _dmi_start_or_renew_store_hint(self) -> None:
+    def _dmi_start_store_hint(self) -> None:
         if not self._dmi_step_has_store:
             return
-        if self._dmi_store_hint.active:
-            self._dmi_store_hint.renew()
-        else:
-            self._dmi_store_hint.start()
+        self._dmi_store_hint.start()
 
     # ==============================
     # Worker-side methods
@@ -243,7 +240,7 @@ class LMCacheConnectorV1(KVConnectorBase_V1):
             **kwargs: additional arguments for the save operation.
         """
         if self._dmi_use_layerwise:
-            self._dmi_start_or_renew_store_hint()
+            self._dmi_start_store_hint()
         try:
             self._lmcache_engine.save_kv_layer(
                 layer_name, kv_layer, attn_metadata, **kwargs
@@ -261,7 +258,7 @@ class LMCacheConnectorV1(KVConnectorBase_V1):
         This prevents overwrites of paged KV buffer before saving done.
         """
         if not self._dmi_use_layerwise:
-            self._dmi_start_or_renew_store_hint()
+            self._dmi_start_store_hint()
         try:
             self._lmcache_engine.wait_for_save()
         finally:

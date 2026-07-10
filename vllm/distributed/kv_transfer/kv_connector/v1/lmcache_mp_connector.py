@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import enum
+import os
+import threading
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -423,15 +426,103 @@ class LMCacheMPConnector(KVConnectorBase_V1):
             raise ValueError(f"Unknown KVConnectorRole: {self.role}")
 
         self.vllm_block_size = vllm_config.cache_config.block_size
-        self._dmi_store_hint = D2HHintLease("lmcache_mp_store")
+        self._init_dmi_store_hint()
 
-    def _dmi_update_store_hint(self) -> None:
-        if self.role != KVConnectorRole.WORKER:
-            return
-        pending = bool(getattr(self.worker_adapter, "store_futures", {}))
-        if pending:
-            self._dmi_store_hint.renew()
-        else:
+    def _init_dmi_store_hint(self) -> None:
+        self._dmi_store_hint = D2HHintLease("lmcache_mp_store")
+        self._dmi_store_lock = threading.Lock()
+        self._dmi_store_wake = threading.Event()
+        self._dmi_store_generation = 0
+        self._dmi_store_submission_active = False
+        self._dmi_store_shutdown = False
+        self._dmi_store_watcher: threading.Thread | None = None
+        self._dmi_store_started_ns = 0
+        self._dmi_hint_audit = os.environ.get("DMX_PCIE_HINT_AUDIT", "0").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    def _dmi_begin_store_submission(self) -> None:
+        with self._dmi_store_lock:
+            self._dmi_store_generation += 1
+            self._dmi_store_submission_active = True
+            if not self._dmi_store_hint.active:
+                self._dmi_store_started_ns = time.monotonic_ns()
+            self._dmi_store_hint.start()
+            self._dmi_store_wake.set()
+
+    def _dmi_finish_store_submission(self) -> None:
+        with self._dmi_store_lock:
+            self._dmi_store_submission_active = False
+            watcher = self._dmi_store_watcher
+            if watcher is None or not watcher.is_alive():
+                watcher = threading.Thread(
+                    target=self._dmi_watch_store_futures,
+                    name="lmcache-dmi-store-watch",
+                    daemon=True,
+                )
+                self._dmi_store_watcher = watcher
+                watcher.start()
+            self._dmi_store_wake.set()
+
+    def _dmi_watch_store_futures(self) -> None:
+        while True:
+            with self._dmi_store_lock:
+                if self._dmi_store_shutdown:
+                    self._dmi_store_watcher = None
+                    return
+
+                generation = self._dmi_store_generation
+                pending = self._dmi_store_submission_active
+                if not pending:
+                    futures = tuple(
+                        getattr(self.worker_adapter, "store_futures", {}).values()
+                    )
+                    for future in futures:
+                        try:
+                            if not future.query():
+                                pending = True
+                                break
+                        except Exception:
+                            # A failed future no longer represents live D2H. The
+                            # adapter owns surfacing the operation error.
+                            continue
+
+                if generation != self._dmi_store_generation:
+                    continue
+                if not pending:
+                    duration_ms = (
+                        (time.monotonic_ns() - self._dmi_store_started_ns) / 1_000_000
+                        if self._dmi_store_started_ns > 0
+                        else 0.0
+                    )
+                    self._dmi_store_hint.finish()
+                    self._dmi_store_started_ns = 0
+                    if self._dmi_hint_audit:
+                        logger.info(
+                            "[DMI PCIeHint] source=lmcache_mp_store "
+                            "event=end duration_ms=%.3f",
+                            duration_ms,
+                        )
+                    self._dmi_store_watcher = None
+                    return
+
+                self._dmi_store_hint.renew()
+                self._dmi_store_wake.clear()
+
+            self._dmi_store_wake.wait(timeout=0.005)
+
+    def _dmi_stop_store_watcher(self) -> None:
+        with self._dmi_store_lock:
+            self._dmi_store_shutdown = True
+            self._dmi_store_wake.set()
+            watcher = self._dmi_store_watcher
+        if watcher is not None and watcher is not threading.current_thread():
+            watcher.join(timeout=1.0)
+        with self._dmi_store_lock:
+            self._dmi_store_watcher = None
             self._dmi_store_hint.finish()
 
     @property
@@ -495,7 +586,6 @@ class LMCacheMPConnector(KVConnectorBase_V1):
             ops.append(meta.op)
 
         if len(request_ids) == 0:
-            self._dmi_update_store_hint()
             return
 
         with torch.cuda.stream(torch.cuda.current_stream()):
@@ -564,12 +654,11 @@ class LMCacheMPConnector(KVConnectorBase_V1):
             event = torch.cuda.Event(interprocess=True)
             event.record()
 
-        self._dmi_store_hint.start()
+        self._dmi_begin_store_submission()
         try:
             self.worker_adapter.batched_submit_store_requests(request_ids, ops, event)
-        except Exception:
-            self._dmi_update_store_hint()
-            raise
+        finally:
+            self._dmi_finish_store_submission()
 
     def get_finished(
         self, finished_req_ids: set[str]
@@ -587,10 +676,9 @@ class LMCacheMPConnector(KVConnectorBase_V1):
             The finished saves/sends req ids must belong to a set provided in a
             call to this method (this call or a prior one).
         """
-        try:
+        with self._dmi_store_lock:
             val = self.worker_adapter.get_finished(finished_req_ids)
-        finally:
-            self._dmi_update_store_hint()
+        self._dmi_store_wake.set()
         # logger.error("Finished req ids: %s, %s", val[0], val[1])
         return val
 
@@ -621,6 +709,7 @@ class LMCacheMPConnector(KVConnectorBase_V1):
         is shutting down to ensure that all the async operations are
         completed and the connector is cleaned up properly.
         """
+        self._dmi_stop_store_watcher()
         try:
             if hasattr(self, "worker_adapter"):
                 self.worker_adapter.shutdown()

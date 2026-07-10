@@ -201,6 +201,14 @@ class FakeCudaEvent:
         pass
 
 
+class FakeMPFuture:
+    def __init__(self) -> None:
+        self.done = False
+
+    def query(self) -> bool:
+        return self.done
+
+
 class FakeMPWorkerAdapter:
     def __init__(self, connector) -> None:
         self.connector = connector
@@ -210,7 +218,7 @@ class FakeMPWorkerAdapter:
 
     def batched_submit_store_requests(self, request_ids, _ops, _event) -> None:
         self.submission_active_states.append(connector_hint_active(self.connector))
-        self.store_futures[request_ids[0]] = object()
+        self.store_futures[request_ids[0]] = FakeMPFuture()
 
     def get_finished(self, _finished_req_ids):
         finished = self.completed.intersection(self.store_futures)
@@ -229,7 +237,7 @@ def connector_hint_active(connector) -> bool:
 def make_lmcache_mp_connector():
     connector = object.__new__(LMCacheMPConnector)
     connector._role = KVConnectorRole.WORKER
-    connector._dmi_store_hint = dmi_pcie_hint.D2HHintLease("lmcache_mp_store")
+    connector._init_dmi_store_hint()
     connector.worker_adapter = FakeMPWorkerAdapter(connector)
     metadata = LMCacheMPConnectorMetadata()
     metadata.add_request_metadata(
@@ -241,6 +249,12 @@ def make_lmcache_mp_connector():
     )
     connector._connector_metadata = metadata
     return connector
+
+
+def wait_for_store_watcher(connector) -> None:
+    watcher = connector._dmi_store_watcher
+    if watcher is not None:
+        watcher.join(timeout=1.0)
 
 
 def patch_cuda_event_recording(monkeypatch) -> None:
@@ -270,6 +284,7 @@ def test_lmcache_mp_hint_stays_active_until_store_future_finishes(monkeypatch):
 
     connector.worker_adapter.completed.add("request-0")
     connector.get_finished({"request-0"})
+    wait_for_store_watcher(connector)
 
     assert connector._dmi_store_hint.active is False
     assert [hint["valid_until_ns"] == 0 for hint in hints] == [True, False]
@@ -281,7 +296,7 @@ def test_lmcache_mp_does_not_end_while_another_store_future_is_pending(monkeypat
     connector = make_lmcache_mp_connector()
 
     connector.wait_for_save()
-    connector.worker_adapter.store_futures["request-1"] = object()
+    connector.worker_adapter.store_futures["request-1"] = FakeMPFuture()
     connector.worker_adapter.completed.add("request-0")
     connector.get_finished({"request-0"})
 
@@ -290,6 +305,22 @@ def test_lmcache_mp_does_not_end_while_another_store_future_is_pending(monkeypat
 
     connector.worker_adapter.completed.add("request-1")
     connector.get_finished({"request-1"})
+    wait_for_store_watcher(connector)
+
+    assert connector._dmi_store_hint.active is False
+    assert [hint["valid_until_ns"] == 0 for hint in hints] == [True, False]
+
+
+def test_lmcache_mp_watcher_ends_hint_without_another_serving_step(monkeypatch):
+    hints = capture_hints(monkeypatch)
+    patch_cuda_event_recording(monkeypatch)
+    connector = make_lmcache_mp_connector()
+
+    connector.wait_for_save()
+    future = connector.worker_adapter.store_futures["request-0"]
+    future.done = True
+    connector._dmi_store_wake.set()
+    wait_for_store_watcher(connector)
 
     assert connector._dmi_store_hint.active is False
     assert [hint["valid_until_ns"] == 0 for hint in hints] == [True, False]

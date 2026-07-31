@@ -409,7 +409,31 @@ class GPT2CompareForCausalLM(nn.Module, SupportsPP):
                 bufs[attr[5:]] = getattr(self, attr)
         return bufs
 
-    def get_hook_specs(self) -> list[HookSpec]:
+    def _get_layer_hook_specs(self, layer_no: int, block) -> list[HookSpec]:
+        attn = None if block is None else block.attn
+        mlp = None if block is None else block.mlp
+
+        def hook(module, name: str):
+            return None if module is None else getattr(module, name)
+
+        return [
+            HookSpec(HOOK_TYPE_RESID_PRE, hook(block, "hook_resid_pre"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_LN1, hook(block, "hook_ln1"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_Q, hook(attn, "hook_q"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_K, hook(attn, "hook_k"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_V, hook(attn, "hook_v"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_Z, hook(attn, "hook_z"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_ATTN_OUT, hook(block, "hook_attn_out"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_RESID_MID, hook(block, "hook_resid_mid"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_LN2, hook(block, "hook_ln2"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_MLP_IN, hook(block, "hook_mlp_in"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_MLP_POST, hook(mlp, "hook_post"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_MLP_OUT, hook(block, "hook_mlp_out"), layer_no=layer_no, dim0_is_actual_tokens=True),
+        ]
+
+    def get_hook_specs(
+        self, *, model_wide: bool = False
+    ) -> list[HookSpec]:
         specs: list[HookSpec] = []
         tr = self.transformer
 
@@ -417,29 +441,22 @@ class GPT2CompareForCausalLM(nn.Module, SupportsPP):
         # Mark these specs so the vLLM adapter (when padding_strip=True)
         # can substitute actual_q_len for q_len in shape + reservation.
         # Excluded: FINAL_LOGITS (dim-0 = num_requests, not total_tokens).
-        specs.append(HookSpec(HOOK_TYPE_TOKEN_IDS, self.hook_token_ids, dtype=torch.int32, dim0_is_actual_tokens=True))
-        specs.append(HookSpec(HOOK_TYPE_EMBED, tr.hook_embed, dim0_is_actual_tokens=True))
-        specs.append(HookSpec(HOOK_TYPE_POS_EMBED, tr.hook_pos_embed, dim0_is_actual_tokens=True))
+        specs.append(HookSpec(HOOK_TYPE_TOKEN_IDS, None if model_wide else self.hook_token_ids, dtype=torch.int32, dim0_is_actual_tokens=True))
+        specs.append(HookSpec(HOOK_TYPE_EMBED, None if model_wide else tr.hook_embed, dim0_is_actual_tokens=True))
+        specs.append(HookSpec(HOOK_TYPE_POS_EMBED, None if model_wide else tr.hook_pos_embed, dim0_is_actual_tokens=True))
 
-        for i in range(tr.start_layer, tr.end_layer):
-            block = tr.h[i]
-            attn = block.attn
-            specs.append(HookSpec(HOOK_TYPE_RESID_PRE, block.hook_resid_pre, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_LN1, block.hook_ln1, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_Q, attn.hook_q, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_K, attn.hook_k, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_V, attn.hook_v, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_Z, attn.hook_z, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_ATTN_OUT, block.hook_attn_out, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_RESID_MID, block.hook_resid_mid, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_LN2, block.hook_ln2, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_MLP_IN, block.hook_mlp_in, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_MLP_POST, block.mlp.hook_post, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_MLP_OUT, block.hook_mlp_out, layer_no=i, dim0_is_actual_tokens=True))
+        layer_indices = (
+            range(len(tr.h))
+            if model_wide
+            else range(tr.start_layer, tr.end_layer)
+        )
+        for i in layer_indices:
+            block = None if model_wide else tr.h[i]
+            specs.extend(self._get_layer_hook_specs(i, block))
 
-        specs.append(HookSpec(HOOK_TYPE_RESID_FINAL, tr.hook_resid_final, dim0_is_actual_tokens=True))
-        specs.append(HookSpec(HOOK_TYPE_FINAL_LN, tr.hook_final_ln, dim0_is_actual_tokens=True))
-        specs.append(HookSpec(HOOK_TYPE_FINAL_LOGITS, self.hook_final_logits))
+        specs.append(HookSpec(HOOK_TYPE_RESID_FINAL, None if model_wide else tr.hook_resid_final, dim0_is_actual_tokens=True))
+        specs.append(HookSpec(HOOK_TYPE_FINAL_LN, None if model_wide else tr.hook_final_ln, dim0_is_actual_tokens=True))
+        specs.append(HookSpec(HOOK_TYPE_FINAL_LOGITS, None if model_wide else self.hook_final_logits))
 
         return specs
 

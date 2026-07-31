@@ -531,33 +531,50 @@ class Qwen3CompareForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle
                 bufs[attr[5:]] = getattr(self, attr)
         return bufs
 
-    def get_hook_specs(self) -> list[HookSpec]:
+    def _get_layer_hook_specs(self, layer_no: int, layer) -> list[HookSpec]:
+        attn = None if layer is None else layer.self_attn
+        mlp = None if layer is None else layer.mlp
+
+        def hook(module, name: str):
+            return None if module is None else getattr(module, name)
+
+        return [
+            HookSpec(HOOK_TYPE_RESID_PRE, hook(layer, "hook_resid_pre"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_LN1, hook(layer, "hook_ln1"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_Q, hook(attn, "hook_q"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_K, hook(attn, "hook_k"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_V, hook(attn, "hook_v"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_Z, hook(attn, "hook_z"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_ATTN_OUT, hook(layer, "hook_attn_out"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_RESID_MID, hook(layer, "hook_resid_mid"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_LN2, hook(layer, "hook_ln2"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_MLP_IN, hook(layer, "hook_mlp_in"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_MLP_POST, hook(mlp, "hook_post"), layer_no=layer_no, dim0_is_actual_tokens=True),
+            HookSpec(HOOK_TYPE_MLP_OUT, hook(layer, "hook_mlp_out"), layer_no=layer_no, dim0_is_actual_tokens=True),
+        ]
+
+    def get_hook_specs(
+        self, *, model_wide: bool = False
+    ) -> list[HookSpec]:
         specs: list[HookSpec] = []
         m = self.model
         # vLLM flat layout: dim-0 of every per-token hook is total_tokens.
         # Mark these specs so the vLLM adapter (when padding_strip=True)
         # can substitute actual_q_len for q_len in shape + reservation.
         # Excluded: FINAL_LOGITS (dim-0 = num_requests, not total_tokens).
-        specs.append(HookSpec(HOOK_TYPE_TOKEN_IDS, self.hook_token_ids, dtype=torch.int32, dim0_is_actual_tokens=True))
-        specs.append(HookSpec(HOOK_TYPE_EMBED, m.hook_embed, dim0_is_actual_tokens=True))
-        for i in range(m.start_layer, m.end_layer):
-            layer = m.layers[i]
-            if isinstance(layer, PPMissingLayer):
+        specs.append(HookSpec(HOOK_TYPE_TOKEN_IDS, None if model_wide else self.hook_token_ids, dtype=torch.int32, dim0_is_actual_tokens=True))
+        specs.append(HookSpec(HOOK_TYPE_EMBED, None if model_wide else m.hook_embed, dim0_is_actual_tokens=True))
+        layer_indices = (
+            range(len(m.layers))
+            if model_wide
+            else range(m.start_layer, m.end_layer)
+        )
+        for i in layer_indices:
+            layer = None if model_wide else m.layers[i]
+            if layer is not None and isinstance(layer, PPMissingLayer):
                 continue
-            attn = layer.self_attn
-            specs.append(HookSpec(HOOK_TYPE_RESID_PRE, layer.hook_resid_pre, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_LN1, layer.hook_ln1, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_Q, attn.hook_q, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_K, attn.hook_k, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_V, attn.hook_v, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_Z, attn.hook_z, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_ATTN_OUT, layer.hook_attn_out, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_RESID_MID, layer.hook_resid_mid, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_LN2, layer.hook_ln2, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_MLP_IN, layer.hook_mlp_in, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_MLP_POST, layer.mlp.hook_post, layer_no=i, dim0_is_actual_tokens=True))
-            specs.append(HookSpec(HOOK_TYPE_MLP_OUT, layer.hook_mlp_out, layer_no=i, dim0_is_actual_tokens=True))
-        specs.append(HookSpec(HOOK_TYPE_RESID_FINAL, m.hook_resid_final, dim0_is_actual_tokens=True))
-        specs.append(HookSpec(HOOK_TYPE_FINAL_LN, m.hook_final_ln, dim0_is_actual_tokens=True))
-        specs.append(HookSpec(HOOK_TYPE_FINAL_LOGITS, self.hook_final_logits))
+            specs.extend(self._get_layer_hook_specs(i, layer))
+        specs.append(HookSpec(HOOK_TYPE_RESID_FINAL, None if model_wide else m.hook_resid_final, dim0_is_actual_tokens=True))
+        specs.append(HookSpec(HOOK_TYPE_FINAL_LN, None if model_wide else m.hook_final_ln, dim0_is_actual_tokens=True))
+        specs.append(HookSpec(HOOK_TYPE_FINAL_LOGITS, None if model_wide else self.hook_final_logits))
         return specs

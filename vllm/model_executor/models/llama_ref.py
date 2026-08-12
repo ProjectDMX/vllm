@@ -35,19 +35,23 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     ParallelLMHead,
     VocabParallelEmbedding,
 )
-from vllm.model_executor.model_loader.weight_utils import (
-    default_weight_loader,
-    maybe_remap_kv_scale_name,
-)
 from vllm.sequence import IntermediateTensors
 from vllm.v1.attention.backend import AttentionType
 
-from .interfaces import SupportsEagle, SupportsEagle3, SupportsLoRA, SupportsPP
+from .interfaces import (
+    EagleModelMixin,
+    LocalArgmaxMixin,
+    SupportsEagle,
+    SupportsEagle3,
+    SupportsLoRA,
+    SupportsPP,
+    SupportsQuant,
+)
 from .utils import (
     AutoWeightsLoader,
     PPMissingLayer,
+    WeightsMapper,
     extract_layer_index,
-    is_pp_missing_parameter,
     make_empty_intermediate_tensors_factory,
     make_layers,
     maybe_prefix,
@@ -152,9 +156,6 @@ class LlamaAttention(nn.Module):
         )
 
         is_neox_style = True
-        is_gguf = quant_config and quant_config.get_name() == "gguf"
-        if is_gguf and config.model_type == "llama":
-            is_neox_style = False
 
         self.rotary_emb = get_rope(
             self.head_dim,
@@ -199,11 +200,17 @@ class LlamaAttention(nn.Module):
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-        q_by_head = q.view(*q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim)
+        q_by_head = q.view(  # noqa: F841 - used by enable_ref_hooks.py
+            *q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim
+        )
         # BENCH_OFF q: self._buf_q[:q_by_head.shape[0]].copy_(q_by_head)
-        k_by_head = k.view(*k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim)
+        k_by_head = k.view(  # noqa: F841 - used by enable_ref_hooks.py
+            *k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim
+        )
         # BENCH_OFF k: self._buf_k[:k_by_head.shape[0]].copy_(k_by_head)
-        v_by_head = v.view(*v.shape[:-1], v.shape[-1] // self.head_dim, self.head_dim)
+        v_by_head = v.view(  # noqa: F841 - used by enable_ref_hooks.py
+            *v.shape[:-1], v.shape[-1] // self.head_dim, self.head_dim
+        )
         # BENCH_OFF v: self._buf_v[:v_by_head.shape[0]].copy_(v_by_head)
         q, k = self.rotary_emb(positions, q, k)
         attn_output = self.attn(q, k, v)
@@ -295,11 +302,24 @@ class LlamaDecoderLayer(nn.Module):
 
 
 @support_torch_compile(
-    shape_invariants=lambda input_ids, positions, intermediate_tensors=None, inputs_embeds=None: (
-        torch._check(positions.size()[0] == input_ids.size()[0]) if input_ids is not None else None
-    ),
+    dynamic_arg_dims={
+        "input_ids": {0: "b"},
+        "positions": {0: "b"},
+        "intermediate_tensors": {0: "b"},
+        "inputs_embeds": {0: "b"},
+    },
 )
-class LlamaModel(nn.Module):
+class LlamaModel(nn.Module, EagleModelMixin):
+    hf_to_vllm_mapper = WeightsMapper(
+        orig_to_new_stacked={
+            ".q_proj": (".qkv_proj", "q"),
+            ".k_proj": (".qkv_proj", "k"),
+            ".v_proj": (".qkv_proj", "v"),
+            ".gate_proj": (".gate_up_proj", 0),
+            ".up_proj": (".gate_up_proj", 1),
+        }
+    )
+
     def __init__(
         self,
         *,
@@ -365,8 +385,16 @@ class LlamaModel(nn.Module):
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
-        for layer in islice(self.layers, self.start_layer, self.end_layer):
+        aux_hidden_states = self._maybe_add_hidden_state(
+            [], 0, hidden_states, residual
+        )
+        for idx, layer in enumerate(
+            islice(self.layers, self.start_layer, self.end_layer)
+        ):
             hidden_states, residual = layer(positions, hidden_states, residual)
+            self._maybe_add_hidden_state(
+                aux_hidden_states, idx + 1, hidden_states, residual
+            )
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors(
@@ -375,10 +403,21 @@ class LlamaModel(nn.Module):
         # BENCH_OFF resid_final: self._buf_resid_final[:hidden_states.shape[0]].copy_(hidden_states + residual)
         hidden_states, _ = self.norm(hidden_states, residual)
         # BENCH_OFF final_ln: self._buf_final_ln[:hidden_states.shape[0]].copy_(hidden_states)
+        if aux_hidden_states:
+            return hidden_states, aux_hidden_states
         return hidden_states
 
 
-class LlamaRefForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle, SupportsEagle3):
+class LlamaRefForCausalLM(
+    LocalArgmaxMixin,
+    nn.Module,
+    SupportsLoRA,
+    SupportsPP,
+    SupportsEagle,
+    SupportsEagle3,
+    SupportsQuant,
+):
+    hf_to_vllm_mapper = LlamaModel.hf_to_vllm_mapper
     packed_modules_mapping = {
         "qkv_proj": ["q_proj", "k_proj", "v_proj"],
         "gate_up_proj": ["gate_proj", "up_proj"],
@@ -544,54 +583,8 @@ class LlamaRefForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle, Su
         return logits
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
-        stacked_params_mapping = [
-            (".qkv_proj", ".q_proj", "q"),
-            (".qkv_proj", ".k_proj", "k"),
-            (".qkv_proj", ".v_proj", "v"),
-            (".gate_up_proj", ".gate_proj", 0),
-            (".gate_up_proj", ".up_proj", 1),
-        ]
-        params_dict = dict(self.named_parameters())
-        loaded_params: set[str] = set()
-        for name, loaded_weight in weights:
-            if "rotary_emb.inv_freq" in name:
-                continue
-            if "rotary_emb.cos_cached" in name or "rotary_emb.sin_cached" in name:
-                continue
-            if self.model.quant_config is not None and (
-                scale_name := self.model.quant_config.get_cache_scale(name)
-            ):
-                param = params_dict[scale_name]
-                weight_loader = getattr(param, "weight_loader", default_weight_loader)
-                loaded_weight = (
-                    loaded_weight if loaded_weight.dim() == 0 else loaded_weight[0]
-                )
-                weight_loader(param, loaded_weight)
-                loaded_params.add(scale_name)
-                continue
-            if "scale" in name or "zero_point" in name:
-                name = maybe_remap_kv_scale_name(name, params_dict)
-                if name is None:
-                    continue
-            for param_name, weight_name, shard_id in stacked_params_mapping:
-                if weight_name not in name:
-                    continue
-                name = name.replace(weight_name, param_name)
-                if name.endswith(".bias") and name not in params_dict:
-                    continue
-                if is_pp_missing_parameter(name, self):
-                    continue
-                param = params_dict[name]
-                weight_loader = param.weight_loader
-                weight_loader(param, loaded_weight, shard_id)
-                break
-            else:
-                if name.endswith(".bias") and name not in params_dict:
-                    continue
-                if is_pp_missing_parameter(name, self):
-                    continue
-                param = params_dict[name]
-                weight_loader = getattr(param, "weight_loader", default_weight_loader)
-                weight_loader(param, loaded_weight)
-            loaded_params.add(name)
-        return loaded_params
+        loader = AutoWeightsLoader(
+            self,
+            skip_prefixes=(["lm_head."] if self.config.tie_word_embeddings else None),
+        )
+        return loader.load_weights(weights)

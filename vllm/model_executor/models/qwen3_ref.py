@@ -32,7 +32,13 @@ from vllm.sequence import IntermediateTensors
 from vllm.transformers_utils.config import set_default_rope_theta
 from vllm.v1.attention.backend import AttentionType
 
-from .interfaces import SupportsEagle3, SupportsLoRA, SupportsPP
+from .interfaces import (
+    LocalArgmaxMixin,
+    SupportsEagle,
+    SupportsEagle3,
+    SupportsLoRA,
+    SupportsPP,
+)
 from .qwen2 import Qwen2MLP as _Qwen2MLP
 from .qwen2 import Qwen2Model
 from .utils import AutoWeightsLoader, PPMissingLayer, extract_layer_index, maybe_prefix
@@ -149,7 +155,9 @@ class Qwen3Attention(nn.Module):
         k_by_head = self.k_norm(k_by_head)
         # BENCH_OFF k: self._buf_k[:k_by_head.shape[0]].copy_(k_by_head)
         k = k_by_head.view(k.shape)
-        v_head = v.view(*v.shape[:-1], v.shape[-1] // self.head_dim, self.head_dim)
+        v_head = v.view(  # noqa: F841 - used by enable_ref_hooks.py
+            *v.shape[:-1], v.shape[-1] // self.head_dim, self.head_dim
+        )
         # BENCH_OFF v: self._buf_v[:v_head.shape[0]].copy_(v_head)
         q, k = self.rotary_emb(positions, q, k)
         attn_output = self.attn(q, k, v)
@@ -274,8 +282,16 @@ class Qwen3Model(Qwen2Model):
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
-        for layer in islice(self.layers, self.start_layer, self.end_layer):
+        aux_hidden_states = self._maybe_add_hidden_state(
+            [], 0, hidden_states, residual
+        )
+        for idx, layer in enumerate(
+            islice(self.layers, self.start_layer, self.end_layer)
+        ):
             hidden_states, residual = layer(positions, hidden_states, residual)
+            self._maybe_add_hidden_state(
+                aux_hidden_states, idx + 1, hidden_states, residual
+            )
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors(
@@ -284,10 +300,20 @@ class Qwen3Model(Qwen2Model):
         # BENCH_OFF resid_final: self._buf_resid_final[:hidden_states.shape[0]].copy_(hidden_states + residual)
         hidden_states, _ = self.norm(hidden_states, residual)
         # BENCH_OFF final_ln: self._buf_final_ln[:hidden_states.shape[0]].copy_(hidden_states)
+        if aux_hidden_states:
+            return hidden_states, aux_hidden_states
         return hidden_states
 
 
-class Qwen3RefForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle3):
+class Qwen3RefForCausalLM(
+    LocalArgmaxMixin,
+    nn.Module,
+    SupportsLoRA,
+    SupportsPP,
+    SupportsEagle,
+    SupportsEagle3,
+):
+    hf_to_vllm_mapper = Qwen3Model.hf_to_vllm_mapper
     packed_modules_mapping = {
         "qkv_proj": [
             "q_proj",
@@ -312,6 +338,7 @@ class Qwen3RefForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle3):
 
         self.config = config
 
+        self.vllm_config = vllm_config
         self.quant_config = quant_config
         self.model = Qwen3Model(
             vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model")

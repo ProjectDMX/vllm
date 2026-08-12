@@ -13,7 +13,6 @@ Deliberately not included in this wrapper:
 - expert-local post-dispatch / pre-combine hooks
 """
 
-from collections.abc import Iterable
 from itertools import islice
 
 import torch
@@ -22,7 +21,7 @@ from torch import nn
 
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import CacheConfig, VllmConfig
-from vllm.distributed import get_pp_group, get_tensor_model_parallel_world_size
+from vllm.distributed import get_pp_group
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
@@ -64,9 +63,9 @@ from .qwen2_moe import (
     Qwen2MoeSparseMoeBlock as _Qwen2MoeSparseMoeBlock,
 )
 from .utils import (
-    AutoWeightsLoader,
     PPMissingLayer,
     extract_layer_index,
+    make_empty_intermediate_tensors_factory,
     make_layers,
     maybe_prefix,
 )
@@ -81,14 +80,14 @@ class Qwen2MoeMLP(_Qwen2MoeMLP):
 
     def forward(self, x):
         gate_up, _ = self.gate_up_proj(x)
-        x = self.act_fn(gate_up)
-        self.hook_post(x)
+        out = self.act_fn(gate_up)
+        self.hook_post(out)
         if hasattr(self, "_buf_mlp_post"):
-            self._buf_mlp_post[:x.shape[0]].copy_(x)
-        x, _ = self.down_proj(x)
+            self._buf_mlp_post[:out.shape[0]].copy_(out)
+        out, _ = self.down_proj(out)
         if self.expert_gate is not None:
-            x = F.sigmoid(self.expert_gate(x)[0]) * x
-        return x
+            out = F.sigmoid(self.expert_gate(x)[0]) * out
+        return out
 
 
 class Qwen2MoeSparseMoeBlock(_Qwen2MoeSparseMoeBlock):
@@ -127,12 +126,6 @@ class Qwen2MoeSparseMoeBlock(_Qwen2MoeSparseMoeBlock):
             hidden_states=hidden_states,
             router_logits=router_logits,
         )
-        if self.shared_expert is not None:
-            final_hidden_states = final_hidden_states[0] + final_hidden_states[1]
-        if self.tp_size > 1:
-            final_hidden_states = self.experts.maybe_all_reduce_tensor_model_parallel(
-                final_hidden_states
-            )
         return final_hidden_states.view(orig_shape)
 
 
@@ -323,8 +316,6 @@ class Qwen2MoeModel(_Qwen2MoeModel):
         from vllm.model_executor.layers.vocab_parallel_embedding import (
             VocabParallelEmbedding,
         )
-        from .qwen2_moe import make_empty_intermediate_tensors_factory
-
         self.embed_tokens = VocabParallelEmbedding(
             config.vocab_size,
             config.hidden_size,
@@ -452,13 +443,6 @@ class Qwen2MoePForCausalLM(_Qwen2MoeForCausalLM, SupportsPP, SupportsLoRA):
         if hasattr(self, "_buf_final_logits"):
             self._buf_final_logits[:logits.shape[0]].copy_(logits)
         return logits
-
-    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
-        loader = AutoWeightsLoader(self)
-        return loader.load_weights(weights)
-
-    def get_expert_mapping(self) -> list[tuple[str, str, int, str]]:
-        return self.model.get_expert_mapping()
 
     def _get_layer_hook_specs(self, layer_no: int, layer) -> list[HookSpec]:
         attn = None if layer is None else layer.self_attn

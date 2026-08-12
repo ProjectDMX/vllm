@@ -53,7 +53,13 @@ from vllm.sequence import IntermediateTensors
 from vllm.transformers_utils.config import set_default_rope_theta
 from vllm.v1.attention.backend import AttentionType
 
-from .interfaces import SupportsEagle3, SupportsLoRA, SupportsPP
+from .interfaces import (
+    LocalArgmaxMixin,
+    SupportsEagle,
+    SupportsEagle3,
+    SupportsLoRA,
+    SupportsPP,
+)
 from .qwen2 import Qwen2MLP as _Qwen2MLP
 from .qwen2 import Qwen2Model
 from .utils import AutoWeightsLoader, PPMissingLayer, extract_layer_index, maybe_prefix
@@ -354,8 +360,16 @@ class Qwen3Model(Qwen2Model):
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
-        for layer in islice(self.layers, self.start_layer, self.end_layer):
+        aux_hidden_states = self._maybe_add_hidden_state(
+            [], 0, hidden_states, residual
+        )
+        for idx, layer in enumerate(
+            islice(self.layers, self.start_layer, self.end_layer)
+        ):
             hidden_states, residual = layer(positions, hidden_states, residual)
+            self._maybe_add_hidden_state(
+                aux_hidden_states, idx + 1, hidden_states, residual
+            )
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors(
@@ -368,10 +382,20 @@ class Qwen3Model(Qwen2Model):
         hidden_states, _ = self.norm(hidden_states, residual)
         self.hook_final_ln(hidden_states)
         self._buf_final_ln[:hidden_states.shape[0]].copy_(hidden_states)
+        if aux_hidden_states:
+            return hidden_states, aux_hidden_states
         return hidden_states
 
 
-class Qwen3CompareForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle3):
+class Qwen3CompareForCausalLM(
+    LocalArgmaxMixin,
+    nn.Module,
+    SupportsLoRA,
+    SupportsPP,
+    SupportsEagle,
+    SupportsEagle3,
+):
+    hf_to_vllm_mapper = Qwen3Model.hf_to_vllm_mapper
     packed_modules_mapping = {
         "qkv_proj": [
             "q_proj",
@@ -396,6 +420,7 @@ class Qwen3CompareForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle
 
         self.config = config
 
+        self.vllm_config = vllm_config
         self.quant_config = quant_config
         self.model = Qwen3Model(
             vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model")

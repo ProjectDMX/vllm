@@ -47,7 +47,6 @@ from .qwen2 import (
     Qwen2ForCausalLM as _Qwen2ForCausalLM,
     Qwen2MLP as _Qwen2MLP,
     Qwen2Model as _Qwen2Model,
-    qwen_2_model_invariants,
 )
 from .utils import PPMissingLayer, maybe_prefix
 
@@ -198,12 +197,11 @@ class Qwen2DecoderLayer(nn.Module):
 
 @support_torch_compile(
     dynamic_arg_dims={
-        "input_ids": 0,
+        "input_ids": {0: "b"},
         "positions": -1,
-        "intermediate_tensors": 0,
-        "inputs_embeds": 0,
+        "intermediate_tensors": {0: "b"},
+        "inputs_embeds": {0: "b"},
     },
-    shape_invariants=qwen_2_model_invariants,
 )
 class Qwen2Model(_Qwen2Model):
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:

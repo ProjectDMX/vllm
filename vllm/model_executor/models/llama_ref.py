@@ -595,4 +595,3 @@ class LlamaRefForCausalLM(nn.Module, SupportsLoRA, SupportsPP, SupportsEagle, Su
                 weight_loader(param, loaded_weight)
             loaded_params.add(name)
         return loaded_params
-

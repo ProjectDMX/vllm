@@ -193,6 +193,7 @@ _TEXT_GENERATION_MODELS = {
     "Plamo2ForCausalLM": ("plamo2", "Plamo2ForCausalLM"),
     "Plamo3ForCausalLM": ("plamo3", "Plamo3ForCausalLM"),
     "Qwen2ForCausalLM": ("qwen2", "Qwen2ForCausalLM"),
+    "Qwen2PForCausalLM": ("qwen2_p", "Qwen2PForCausalLM"),
     "Qwen2MoeForCausalLM": ("qwen2_moe", "Qwen2MoeForCausalLM"),
     "Qwen2MoePForCausalLM": ("qwen2_moe_p", "Qwen2MoePForCausalLM"),
     "Qwen2MoeCompareForCausalLM": ("qwen2_moe_compare", "Qwen2MoeCompareForCausalLM"),

@@ -198,6 +198,11 @@ _TEXT_GENERATION_MODELS = {
     "Mamba2ForCausalLM": ("mamba2", "Mamba2ForCausalLM"),
     "MellumForCausalLM": ("mellum", "MellumForCausalLM"),
     "MiniCPMForCausalLM": ("minicpm", "MiniCPMForCausalLM"),
+    "MiniCPMPForCausalLM": ("minicpm_p", "MiniCPMPForCausalLM"),
+    "MiniCPMCompareForCausalLM": (
+        "minicpm_compare",
+        "MiniCPMCompareForCausalLM",
+    ),
     "MiniCPM3ForCausalLM": ("minicpm3", "MiniCPM3ForCausalLM"),
     "MiniMaxM2ForCausalLM": ("minimax_m2", "MiniMaxM2ForCausalLM"),
     "MiniMaxM3SparseForCausalLM": (

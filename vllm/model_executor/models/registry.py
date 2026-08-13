@@ -573,6 +573,14 @@ _MULTIMODAL_MODELS = {
         "vllm.models.kimi_k3",
         "KimiK3ForConditionalGeneration",
     ),
+    "KimiK3PForConditionalGeneration": (
+        "kimi_k3_p",
+        "KimiK3PForConditionalGeneration",
+    ),
+    "KimiK3CompareForConditionalGeneration": (
+        "kimi_k3_compare",
+        "KimiK3CompareForConditionalGeneration",
+    ),
     "MoonshotKimiaForCausalLM": ("kimi_audio", "KimiAudioForConditionalGeneration"),
     "MossTranscribeDiarizeForConditionalGeneration": (
         "moss_transcribe_diarize",

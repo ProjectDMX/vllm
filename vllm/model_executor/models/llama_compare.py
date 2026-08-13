@@ -616,7 +616,7 @@ class LlamaCompareForCausalLM(
             self,
             skip_prefixes=(["lm_head."] if self.config.tie_word_embeddings else None),
         )
-        return loader.load_weights(weights)
+        return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
 
     def _get_layer_hook_specs(self, layer_no: int, layer) -> list[HookSpec]:
         attn = None if layer is None else layer.self_attn

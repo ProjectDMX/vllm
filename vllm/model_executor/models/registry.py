@@ -187,6 +187,7 @@ _TEXT_GENERATION_MODELS = {
     "LlamaCompareForCausalLM": ("llama_compare", "LlamaCompareForCausalLM"),
     "LlamaRefForCausalLM": ("llama_ref", "LlamaRefForCausalLM"),
     "Llama4ForCausalLM": ("llama4", "Llama4ForCausalLM"),
+    "Llama4PForCausalLM": ("llama4_p", "Llama4PForCausalLM"),
     # For decapoda-research/llama-*
     "LLaMAForCausalLM": ("llama", "LlamaForCausalLM"),
     "LongcatFlashForCausalLM": ("longcat_flash", "LongcatFlashForCausalLM"),
@@ -546,6 +547,14 @@ _MULTIMODAL_MODELS = {
     ),
     "Lfm2VlForConditionalGeneration": ("lfm2_vl", "Lfm2VLForConditionalGeneration"),
     "Llama4ForConditionalGeneration": ("mllama4", "Llama4ForConditionalGeneration"),
+    "Llama4PForConditionalGeneration": (
+        "mllama4_p",
+        "Llama4PForConditionalGeneration",
+    ),
+    "Llama4CompareForConditionalGeneration": (
+        "mllama4_compare",
+        "Llama4CompareForConditionalGeneration",
+    ),
     "Llama_Nemotron_Nano_VL": ("nemotron_vl", "LlamaNemotronVLChatModel"),
     "LlavaForConditionalGeneration": ("llava", "LlavaForConditionalGeneration"),
     "LlavaNextForConditionalGeneration": (

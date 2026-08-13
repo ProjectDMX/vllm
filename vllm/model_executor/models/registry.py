@@ -500,6 +500,14 @@ _MULTIMODAL_MODELS = {
         "DiffusionGemmaForConditionalGeneration",
     ),
     "Gemma4ForConditionalGeneration": ("gemma4_mm", "Gemma4ForConditionalGeneration"),
+    "Gemma4PForConditionalGeneration": (
+        "gemma4_p",
+        "Gemma4PForConditionalGeneration",
+    ),
+    "Gemma4CompareForConditionalGeneration": (
+        "gemma4_compare",
+        "Gemma4CompareForConditionalGeneration",
+    ),
     "Gemma4UnifiedForConditionalGeneration": (
         "gemma4_unified",
         "Gemma4UnifiedForConditionalGeneration",

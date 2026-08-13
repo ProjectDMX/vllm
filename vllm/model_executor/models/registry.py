@@ -98,6 +98,11 @@ _TEXT_GENERATION_MODELS = {
     "DeepseekV3ForCausalLM": ("deepseek_v2", "DeepseekV3ForCausalLM"),
     "DeepseekV32ForCausalLM": ("deepseek_v2", "DeepseekV3ForCausalLM"),
     "DeepseekV4ForCausalLM": ("vllm.models.deepseek_v4", "DeepseekV4ForCausalLM"),
+    "DeepseekV4PForCausalLM": ("deepseek_v4_p", "DeepseekV4PForCausalLM"),
+    "DeepseekV4CompareForCausalLM": (
+        "deepseek_v4_compare",
+        "DeepseekV4CompareForCausalLM",
+    ),
     "Ernie4_5ForCausalLM": ("ernie45", "Ernie4_5ForCausalLM"),
     "Ernie4_5PForCausalLM": ("ernie45_p", "Ernie4_5PForCausalLM"),
     "Ernie4_5CompareForCausalLM": (
@@ -135,7 +140,20 @@ _TEXT_GENERATION_MODELS = {
     "Glm4MoeForCausalLM": ("glm4_moe", "Glm4MoeForCausalLM"),
     "Glm4MoeLiteForCausalLM": ("glm4_moe_lite", "Glm4MoeLiteForCausalLM"),
     "GlmMoeDsaForCausalLM": ("deepseek_v2", "GlmMoeDsaForCausalLM"),
+    "GlmMoeDsaPForCausalLM": (
+        "glm_moe_dsa_p",
+        "GlmMoeDsaPForCausalLM",
+    ),
+    "GlmMoeDsaCompareForCausalLM": (
+        "glm_moe_dsa_compare",
+        "GlmMoeDsaCompareForCausalLM",
+    ),
     "GptOssForCausalLM": ("gpt_oss", "GptOssForCausalLM"),
+    "GptOssCompareForCausalLM": (
+        "gpt_oss_compare",
+        "GptOssCompareForCausalLM",
+    ),
+    "GptOssPForCausalLM": ("gpt_oss_p", "GptOssPForCausalLM"),
     "GPT2LMHeadModel": ("gpt2", "GPT2LMHeadModel"),
     "GPT2PLMHeadModel": ("gpt2_p", "GPT2PLMHeadModel"),
     "GPT2CompareForCausalLM": ("gpt2_compare", "GPT2CompareForCausalLM"),
@@ -187,6 +205,7 @@ _TEXT_GENERATION_MODELS = {
     "LlamaCompareForCausalLM": ("llama_compare", "LlamaCompareForCausalLM"),
     "LlamaRefForCausalLM": ("llama_ref", "LlamaRefForCausalLM"),
     "Llama4ForCausalLM": ("llama4", "Llama4ForCausalLM"),
+    "Llama4PForCausalLM": ("llama4_p", "Llama4PForCausalLM"),
     # For decapoda-research/llama-*
     "LLaMAForCausalLM": ("llama", "LlamaForCausalLM"),
     "LongcatFlashForCausalLM": ("longcat_flash", "LongcatFlashForCausalLM"),
@@ -198,8 +217,18 @@ _TEXT_GENERATION_MODELS = {
     "Mamba2ForCausalLM": ("mamba2", "Mamba2ForCausalLM"),
     "MellumForCausalLM": ("mellum", "MellumForCausalLM"),
     "MiniCPMForCausalLM": ("minicpm", "MiniCPMForCausalLM"),
+    "MiniCPMPForCausalLM": ("minicpm_p", "MiniCPMPForCausalLM"),
+    "MiniCPMCompareForCausalLM": (
+        "minicpm_compare",
+        "MiniCPMCompareForCausalLM",
+    ),
     "MiniCPM3ForCausalLM": ("minicpm3", "MiniCPM3ForCausalLM"),
     "MiniMaxM2ForCausalLM": ("minimax_m2", "MiniMaxM2ForCausalLM"),
+    "MiniMaxM2PForCausalLM": ("minimax_m2_p", "MiniMaxM2PForCausalLM"),
+    "MiniMaxM2CompareForCausalLM": (
+        "minimax_m2_compare",
+        "MiniMaxM2CompareForCausalLM",
+    ),
     "MiniMaxM3SparseForCausalLM": (
         "vllm.models.minimax_m3",
         "MiniMaxM3SparseForCausalLM",
@@ -261,7 +290,13 @@ _TEXT_GENERATION_MODELS = {
     "Qwen3CompareForCausalLM": ("qwen3_compare", "Qwen3CompareForCausalLM"),
     "Qwen3RefForCausalLM": ("qwen3_ref", "Qwen3RefForCausalLM"),
     "Qwen3MoeForCausalLM": ("qwen3_moe", "Qwen3MoeForCausalLM"),
+    "Qwen3MoePForCausalLM": ("qwen3_moe_p", "Qwen3MoePForCausalLM"),
+    "Qwen3MoeCompareForCausalLM": (
+        "qwen3_moe_compare",
+        "Qwen3MoeCompareForCausalLM",
+    ),
     "Qwen3_5ForCausalLM": ("qwen3_5", "Qwen3_5ForCausalLM"),
+    "Qwen3_5PForCausalLM": ("qwen3_5_p", "Qwen3_5PForCausalLM"),
     "Qwen3_5MoeForCausalLM": ("qwen3_5", "Qwen3_5MoeForCausalLM"),
     "RWForCausalLM": ("falcon", "FalconForCausalLM"),
     "SarvamMoEForCausalLM": ("sarvam", "SarvamMoEForCausalLM"),
@@ -470,6 +505,14 @@ _MULTIMODAL_MODELS = {
         "DiffusionGemmaForConditionalGeneration",
     ),
     "Gemma4ForConditionalGeneration": ("gemma4_mm", "Gemma4ForConditionalGeneration"),
+    "Gemma4PForConditionalGeneration": (
+        "gemma4_p",
+        "Gemma4PForConditionalGeneration",
+    ),
+    "Gemma4CompareForConditionalGeneration": (
+        "gemma4_compare",
+        "Gemma4CompareForConditionalGeneration",
+    ),
     "Gemma4UnifiedForConditionalGeneration": (
         "gemma4_unified",
         "Gemma4UnifiedForConditionalGeneration",
@@ -530,6 +573,14 @@ _MULTIMODAL_MODELS = {
         "vllm.models.kimi_k3",
         "KimiK3ForConditionalGeneration",
     ),
+    "KimiK3PForConditionalGeneration": (
+        "kimi_k3_p",
+        "KimiK3PForConditionalGeneration",
+    ),
+    "KimiK3CompareForConditionalGeneration": (
+        "kimi_k3_compare",
+        "KimiK3CompareForConditionalGeneration",
+    ),
     "MoonshotKimiaForCausalLM": ("kimi_audio", "KimiAudioForConditionalGeneration"),
     "MossTranscribeDiarizeForConditionalGeneration": (
         "moss_transcribe_diarize",
@@ -541,6 +592,14 @@ _MULTIMODAL_MODELS = {
     ),
     "Lfm2VlForConditionalGeneration": ("lfm2_vl", "Lfm2VLForConditionalGeneration"),
     "Llama4ForConditionalGeneration": ("mllama4", "Llama4ForConditionalGeneration"),
+    "Llama4PForConditionalGeneration": (
+        "mllama4_p",
+        "Llama4PForConditionalGeneration",
+    ),
+    "Llama4CompareForConditionalGeneration": (
+        "mllama4_compare",
+        "Llama4CompareForConditionalGeneration",
+    ),
     "Llama_Nemotron_Nano_VL": ("nemotron_vl", "LlamaNemotronVLChatModel"),
     "LlavaForConditionalGeneration": ("llava", "LlavaForConditionalGeneration"),
     "LlavaNextForConditionalGeneration": (
@@ -642,6 +701,14 @@ _MULTIMODAL_MODELS = {
         "Qwen3VLMoeForConditionalGeneration",
     ),
     "Qwen3_5ForConditionalGeneration": ("qwen3_5", "Qwen3_5ForConditionalGeneration"),
+    "Qwen3_5PForConditionalGeneration": (
+        "qwen3_5_p",
+        "Qwen3_5PForConditionalGeneration",
+    ),
+    "Qwen3_5CompareForConditionalGeneration": (
+        "qwen3_5_compare",
+        "Qwen3_5CompareForConditionalGeneration",
+    ),
     "Qwen3_5MoeForConditionalGeneration": (
         "qwen3_5",
         "Qwen3_5MoeForConditionalGeneration",

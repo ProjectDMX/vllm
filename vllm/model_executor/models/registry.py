@@ -155,6 +155,11 @@ _TEXT_GENERATION_MODELS = {
         "KimiLinearForCausalLM",
     ),
     "Lfm2ForCausalLM": ("lfm2", "Lfm2ForCausalLM"),
+    "Lfm2PForCausalLM": ("lfm2_p", "Lfm2PForCausalLM"),
+    "Lfm2CompareForCausalLM": (
+        "lfm2_compare",
+        "Lfm2CompareForCausalLM",
+    ),
     "Lfm2MoeForCausalLM": ("lfm2_moe", "Lfm2MoeForCausalLM"),
     "LagunaForCausalLM": ("laguna", "LagunaForCausalLM"),
     "LlamaForCausalLM": ("llama", "LlamaForCausalLM"),

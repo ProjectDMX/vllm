@@ -150,6 +150,11 @@ _TEXT_GENERATION_MODELS = {
     "IQuestLoopCoderForCausalLM": ("iquest_loopcoder", "IQuestLoopCoderForCausalLM"),
     "Jais2ForCausalLM": ("jais2", "Jais2ForCausalLM"),
     "JambaForCausalLM": ("jamba", "JambaForCausalLM"),
+    "JambaPForCausalLM": ("jamba_p", "JambaPForCausalLM"),
+    "JambaCompareForCausalLM": (
+        "jamba_compare",
+        "JambaCompareForCausalLM",
+    ),
     "KimiLinearForCausalLM": (
         "vllm.models.kimi_k3",
         "KimiLinearForCausalLM",

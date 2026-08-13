@@ -73,6 +73,11 @@ _TEXT_GENERATION_MODELS = {
     # [Decoder-only]
     "AfmoeForCausalLM": ("afmoe", "AfmoeForCausalLM"),
     "ApertusForCausalLM": ("apertus", "ApertusForCausalLM"),
+    "ApertusPForCausalLM": ("apertus_p", "ApertusPForCausalLM"),
+    "ApertusCompareForCausalLM": (
+        "apertus_compare",
+        "ApertusCompareForCausalLM",
+    ),
     "ArceeForCausalLM": ("arcee", "ArceeForCausalLM"),
     "ArcticForCausalLM": ("arctic", "ArcticForCausalLM"),
     "AXK1ForCausalLM": ("AXK1", "AXK1ForCausalLM"),

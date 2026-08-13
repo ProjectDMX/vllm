@@ -219,6 +219,11 @@ _TEXT_GENERATION_MODELS = {
     ),
     "MiniCPM3ForCausalLM": ("minicpm3", "MiniCPM3ForCausalLM"),
     "MiniMaxM2ForCausalLM": ("minimax_m2", "MiniMaxM2ForCausalLM"),
+    "MiniMaxM2PForCausalLM": ("minimax_m2_p", "MiniMaxM2PForCausalLM"),
+    "MiniMaxM2CompareForCausalLM": (
+        "minimax_m2_compare",
+        "MiniMaxM2CompareForCausalLM",
+    ),
     "MiniMaxM3SparseForCausalLM": (
         "vllm.models.minimax_m3",
         "MiniMaxM3SparseForCausalLM",

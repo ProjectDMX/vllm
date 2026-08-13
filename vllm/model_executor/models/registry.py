@@ -218,6 +218,11 @@ _TEXT_GENERATION_MODELS = {
     "NemotronHForCausalLM": ("nemotron_h", "NemotronHForCausalLM"),
     "NemotronHPuzzleForCausalLM": ("nemotron_h", "NemotronHForCausalLM"),
     "Olmo3ForCausalLM": ("olmo3", "Olmo3ForCausalLM"),
+    "Olmo3PForCausalLM": ("olmo3_p", "Olmo3PForCausalLM"),
+    "Olmo3CompareForCausalLM": (
+        "olmo3_compare",
+        "Olmo3CompareForCausalLM",
+    ),
     "OlmoHybridForCausalLM": ("olmo_hybrid", "OlmoHybridForCausalLM"),
     "OlmoeForCausalLM": ("olmoe", "OlmoeForCausalLM"),
     "OPTForCausalLM": ("opt", "OPTForCausalLM"),

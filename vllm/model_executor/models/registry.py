@@ -102,6 +102,11 @@ _TEXT_GENERATION_MODELS = {
     "FalconForCausalLM": ("falcon", "FalconForCausalLM"),
     "FalconMambaForCausalLM": ("mamba", "MambaForCausalLM"),
     "FalconH1ForCausalLM": ("falcon_h1", "FalconH1ForCausalLM"),
+    "FalconH1PForCausalLM": ("falcon_h1_p", "FalconH1PForCausalLM"),
+    "FalconH1CompareForCausalLM": (
+        "falcon_h1_compare",
+        "FalconH1CompareForCausalLM",
+    ),
     "FlexOlmoForCausalLM": ("flex_olmo", "FlexOlmoForCausalLM"),
     "GemmaForCausalLM": ("gemma", "GemmaForCausalLM"),
     "Gemma2ForCausalLM": ("gemma2", "Gemma2ForCausalLM"),

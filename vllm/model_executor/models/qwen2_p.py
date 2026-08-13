@@ -198,7 +198,7 @@ class Qwen2DecoderLayer(nn.Module):
 @support_torch_compile(
     dynamic_arg_dims={
         "input_ids": {0: "b"},
-        "positions": -1,
+        "positions": {-1: "b"},
         "intermediate_tensors": {0: "b"},
         "inputs_embeds": {0: "b"},
     },

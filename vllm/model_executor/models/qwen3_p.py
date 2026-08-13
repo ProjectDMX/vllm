@@ -106,6 +106,7 @@ class Qwen3Attention(nn.Module):
         prefix: str = "",
         attn_type: str = AttentionType.DECODER,
         dual_chunk_attention_config: dict[str, Any] | None = None,
+        per_layer_sliding_window: int | None = None,
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
@@ -164,6 +165,7 @@ class Qwen3Attention(nn.Module):
             num_kv_heads=self.num_kv_heads,
             cache_config=cache_config,
             quant_config=quant_config,
+            per_layer_sliding_window=per_layer_sliding_window,
             prefix=f"{prefix}.attn",
             attn_type=attn_type,
             **{
@@ -212,6 +214,7 @@ class Qwen3DecoderLayer(nn.Module):
         cache_config: CacheConfig | None = None,
         quant_config: QuantizationConfig | None = None,
         prefix: str = "",
+        per_layer_sliding_window: int | None = None,
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -243,6 +246,7 @@ class Qwen3DecoderLayer(nn.Module):
             prefix=f"{prefix}.self_attn",
             attn_type=attn_type,
             dual_chunk_attention_config=dual_chunk_attention_config,
+            per_layer_sliding_window=per_layer_sliding_window,
         )
         self.mlp = Qwen3MLP(
             hidden_size=self.hidden_size,

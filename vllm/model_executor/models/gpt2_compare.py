@@ -29,13 +29,11 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     ParallelLMHead,
     VocabParallelEmbedding,
 )
-from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.sequence import IntermediateTensors
 
 from .interfaces import SupportsPP
 from .utils import (
     AutoWeightsLoader,
-    is_pp_missing_parameter,
     make_empty_intermediate_tensors_factory,
     make_layers,
     maybe_prefix,
@@ -271,25 +269,24 @@ class GPT2Model(nn.Module):
         self._buf_final_ln[:hidden_states.shape[0]].copy_(hidden_states)
         return hidden_states
 
-    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
-        params_dict = dict(self.named_parameters(remove_duplicate=False))
-        loaded_params: set[str] = set()
+    def _transpose_conv1d(
+        self, weights: Iterable[tuple[str, torch.Tensor]]
+    ) -> Iterable[tuple[str, torch.Tensor]]:
+        """Transpose Hugging Face Conv1D weights into vLLM layout."""
+
         for name, loaded_weight in weights:
-            if ".attn.bias" in name or ".attn.masked_bias" in name:
-                continue
-            if is_pp_missing_parameter(name, self):
-                continue
-            param = params_dict[name]
-            for conv1d_weight_name in ["c_attn", "c_proj", "c_fc"]:
-                if conv1d_weight_name not in name:
-                    continue
-                if not name.endswith(".weight"):
-                    continue
+            if name.endswith(".weight") and any(
+                projection in name
+                for projection in ("c_attn", "c_proj", "c_fc")
+            ):
                 loaded_weight = loaded_weight.t()
-            weight_loader = getattr(param, "weight_loader", default_weight_loader)
-            weight_loader(param, loaded_weight)
-            loaded_params.add(name)
-        return loaded_params
+            yield name, loaded_weight
+
+    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+        loader = AutoWeightsLoader(
+            self, skip_substrs=[".attn.bias", ".attn.masked_bias"]
+        )
+        return loader.load_weights(self._transpose_conv1d(weights))
 
 
 class GPT2CompareForCausalLM(nn.Module, SupportsPP):

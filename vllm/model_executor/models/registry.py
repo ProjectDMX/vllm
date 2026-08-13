@@ -271,6 +271,11 @@ _TEXT_GENERATION_MODELS = {
     "Qwen3CompareForCausalLM": ("qwen3_compare", "Qwen3CompareForCausalLM"),
     "Qwen3RefForCausalLM": ("qwen3_ref", "Qwen3RefForCausalLM"),
     "Qwen3MoeForCausalLM": ("qwen3_moe", "Qwen3MoeForCausalLM"),
+    "Qwen3MoePForCausalLM": ("qwen3_moe_p", "Qwen3MoePForCausalLM"),
+    "Qwen3MoeCompareForCausalLM": (
+        "qwen3_moe_compare",
+        "Qwen3MoeCompareForCausalLM",
+    ),
     "Qwen3_5ForCausalLM": ("qwen3_5", "Qwen3_5ForCausalLM"),
     "Qwen3_5MoeForCausalLM": ("qwen3_5", "Qwen3_5MoeForCausalLM"),
     "RWForCausalLM": ("falcon", "FalconForCausalLM"),

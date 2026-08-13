@@ -181,6 +181,11 @@ _TEXT_GENERATION_MODELS = {
     ),
     "Ministral3ForCausalLM": ("mistral", "MistralForCausalLM"),
     "MistralForCausalLM": ("mistral", "MistralForCausalLM"),
+    "MistralPForCausalLM": ("mistral_p", "MistralPForCausalLM"),
+    "MistralCompareForCausalLM": (
+        "mistral_compare",
+        "MistralCompareForCausalLM",
+    ),
     "MistralLarge3ForCausalLM": ("mistral_large_3", "MistralLarge3ForCausalLM"),
     "MixtralForCausalLM": ("mixtral", "MixtralForCausalLM"),
     # transformers's mpt class has lower case

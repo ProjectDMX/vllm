@@ -133,6 +133,11 @@ _TEXT_GENERATION_MODELS = {
     "GPTJForCausalLM": ("gpt_j", "GPTJForCausalLM"),
     "GPTNeoXForCausalLM": ("gpt_neox", "GPTNeoXForCausalLM"),
     "GraniteForCausalLM": ("granite", "GraniteForCausalLM"),
+    "GranitePForCausalLM": ("granite_p", "GranitePForCausalLM"),
+    "GraniteCompareForCausalLM": (
+        "granite_compare",
+        "GraniteCompareForCausalLM",
+    ),
     "GraniteMoeForCausalLM": ("granitemoe", "GraniteMoeForCausalLM"),
     "GraniteMoeHybridForCausalLM": ("granitemoehybrid", "GraniteMoeHybridForCausalLM"),
     "GraniteMoeSharedForCausalLM": ("granitemoeshared", "GraniteMoeSharedForCausalLM"),

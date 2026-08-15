@@ -136,11 +136,11 @@ def chunk_gated_delta_rule(
             Scale factor for the RetNet attention scores.
             If not provided, it will default to `1 / sqrt(K)`. Default: `None`.
         initial_state (Optional[torch.Tensor]):
-            Initial state of shape `[N, H, V, K]` for `N` input sequences.
+            Initial state of shape `[N, H, K, V]` for `N` input sequences.
             For equal-length input sequences, `N` equals the batch size `B`.
             Default: `None`.
         output_final_state (Optional[bool]):
-            Whether to output the final state of shape `[N, H, V, K]`. Default: `False`.
+            Whether to output the final state of shape `[N, H, K, V]`. Default: `False`.
         cu_seqlens (torch.LongTensor):
             Cumulative sequence lengths of shape `[N+1]` used for variable-length training,
             consistent with the FlashAttention API.
@@ -148,7 +148,7 @@ def chunk_gated_delta_rule(
         o (torch.Tensor):
             Outputs of shape `[B, T, H, V]`.
         final_state (torch.Tensor):
-            Final state of shape `[N, H, V, K]` if `output_final_state=True` else `None`.
+            Final state of shape `[N, H, K, V]` if `output_final_state=True` else `None`.
 
     Examples::
         >>> import torch
@@ -162,7 +162,7 @@ def chunk_gated_delta_rule(
         >>> v = torch.randn(B, T, H, V, dtype=torch.bfloat16, device='cuda')
         >>> beta = torch.rand(B, T, H, dtype=torch.bfloat16, device='cuda').sigmoid()
         >>> g = F.logsigmoid(torch.rand(B, T, H, dtype=torch.bfloat16, device='cuda'))
-        >>> h0 = torch.randn(B, H, V, K, dtype=torch.bfloat16, device='cuda')
+        >>> h0 = torch.randn(B, H, K, V, dtype=torch.bfloat16, device='cuda')
         >>> o, ht = chunk_gated_delta_rule(
             q, k, v, g, beta,
             initial_state=h0,

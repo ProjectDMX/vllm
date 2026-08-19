@@ -8,6 +8,8 @@ import torch
 from vllm.distributed.eplb.eplb_state import EplbLayerState
 from vllm.model_executor.layers.fused_moe.config import RoutingMethodType
 
+RoutingObserver = Callable[[torch.Tensor, torch.Tensor], None]
+
 
 class FusedMoERouter(ABC):
     """
@@ -17,7 +19,15 @@ class FusedMoERouter(ABC):
 
     def __init__(self, eplb_state: EplbLayerState | None = None):
         self._routing_replay_out: torch.Tensor | None = None
+        self._routing_observer: RoutingObserver | None = None
         self.eplb_state = eplb_state
+
+    def set_routing_observer(
+        self,
+        observer: RoutingObserver | None,
+    ) -> None:
+        """Observe the weights and IDs consumed by modular experts."""
+        self._routing_observer = observer
 
     @abstractmethod
     def set_capture_fn(
@@ -70,6 +80,9 @@ class FusedMoERouter(ABC):
             topk_indices_dtype=topk_indices_dtype,
             input_ids=input_ids,
         )
+
+        if self._routing_observer is not None:
+            self._routing_observer(topk_weights, topk_ids)
 
         # Write routing data for non-monolithic path (Triton, etc.)
         # (set by bind_routing_capture_to_model during capturer init)

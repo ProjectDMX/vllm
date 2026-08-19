@@ -98,6 +98,21 @@ class Qwen2MoeSparseMoeBlock(_Qwen2MoeSparseMoeBlock):
         self.hook_router_logits = HookPoint()
         self.hook_topk_ids = HookPoint()
         self.hook_topk_weights = HookPoint()
+        self.experts.router.set_routing_observer(self._observe_routing)
+
+    def _observe_routing(
+        self,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+    ) -> None:
+        topk_ids = topk_ids.to(torch.int32)
+        topk_weights = topk_weights.to(torch.float32)
+        self.hook_topk_ids(topk_ids)
+        self.hook_topk_weights(topk_weights)
+        if hasattr(self, "_buf_topk_ids"):
+            self._buf_topk_ids[: topk_ids.shape[0]].copy_(topk_ids)
+        if hasattr(self, "_buf_topk_weights"):
+            self._buf_topk_weights[: topk_weights.shape[0]].copy_(topk_weights)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         orig_shape = hidden_states.shape
@@ -108,19 +123,6 @@ class Qwen2MoeSparseMoeBlock(_Qwen2MoeSparseMoeBlock):
         self.hook_router_logits(router_logits)
         if hasattr(self, "_buf_router_logits"):
             self._buf_router_logits[:router_logits.shape[0]].copy_(router_logits)
-
-        # V1 routing hooks: observe token-major routing tensors directly.
-        # We intentionally do not wire expert-local post-dispatch tensors here.
-        topk_weights, topk_ids = self.experts.router.select_experts(
-            hidden_states=hidden_states,
-            router_logits=router_logits,
-        )
-        self.hook_topk_ids(topk_ids)
-        self.hook_topk_weights(topk_weights)
-        if hasattr(self, "_buf_topk_ids"):
-            self._buf_topk_ids[:topk_ids.shape[0]].copy_(topk_ids)
-        if hasattr(self, "_buf_topk_weights"):
-            self._buf_topk_weights[:topk_weights.shape[0]].copy_(topk_weights)
 
         final_hidden_states = self.experts(
             hidden_states=hidden_states,

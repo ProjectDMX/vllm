@@ -53,7 +53,9 @@ class Qwen2MoeCompareForCausalLM(Qwen2MoePForCausalLM):
             if hasattr(layer.mlp, "hook_router_logits"):
                 layer.mlp._buf_router_logits = torch.empty(max_len, E, device=device, dtype=dtype)
                 layer.mlp._buf_topk_ids = torch.empty(max_len, K, device=device, dtype=torch.int32)
-                layer.mlp._buf_topk_weights = torch.empty(max_len, K, device=device, dtype=dtype)
+                layer.mlp._buf_topk_weights = torch.empty(
+                    max_len, K, device=device, dtype=torch.float32
+                )
 
         max_reqs = vllm_config.scheduler_config.max_num_seqs
         self._buf_final_logits = torch.empty(max_reqs, V, device=device, dtype=dtype)
